@@ -26,8 +26,8 @@
 INITIALIZE_EASYLOGGINGPP
 
 std::unique_ptr<BoardStatic> gBoard;
-std::unique_ptr<WordEscapeState> gState;
-std::unique_ptr<Minimax<WordEscapeState, WordEscapeMove>> gMiniMax(new Minimax<WordEscapeState, WordEscapeMove>(10, INF));
+std::unique_ptr<WordBaseState> gState;
+std::unique_ptr<Minimax<WordBaseState, WordBaseMove>> gMiniMax(new Minimax<WordBaseState, WordBaseMove>(10, INF));
 
 
 static bool doOneCommand(const char* dictionaryPath, const std::string& command) {
@@ -83,7 +83,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //  lwm chalk
       for (auto move : gState->get_legal_moves(INF, tokens[1].c_str())) {
-        WordEscapeState copy(*gState);
+        WordBaseState copy(*gState);
         copy.make_move(move);
         cout << move <<  ": h=" << copy.get_goodness() << endl;
       }
@@ -97,7 +97,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  bombs (3,3),(1,2)
-      MoveSequence sequence(WordEscapeMove::parsePath(tokens[1]));
+      MoveSequence sequence(WordBaseMove::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, false);
     } else if (tokens[0].compare("mbombs") == 0) {
@@ -105,7 +105,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  mbombs (3,3),(1,2)
-      MoveSequence sequence(WordEscapeMove::parsePath(tokens[1]));
+      MoveSequence sequence(WordBaseMove::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, true);
     } else if (tokens[0].compare("nb") == 0) {
@@ -115,7 +115,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //   nb caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg
       //   nb bitumrahtrnsatesgoepevsrnpyes*insaewidanseimrufsgetmaugoitsnixtlherkpuodetsaficdascgatrfornihcnejustogteiryoachlobpengopobirbuscebd
       gBoard.reset(new BoardStatic(tokens[1], dictionaryPath));
-      gState.reset(new WordEscapeState(gBoard.get(), PLAYER_1));
+      gState.reset(new WordBaseState(gBoard.get(), PLAYER_1));
     } else if (tokens[0].compare("sm") == 0) {
       // Suggest a move.
       //
@@ -145,7 +145,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       gMiniMax->setMaxSeconds(maxSeconds);
       gMiniMax->setUseTranspositionTable(useTranspositionTable);
       gMiniMax->setUseNewIterator(useNewIterator);
-      WordEscapeMove move = gMiniMax->get_move(gState.get());
+      WordBaseMove move = gMiniMax->get_move(gState.get());
       cout << "suggested move: " << gBoard->wordFromMove(move) << endl << move << endl;
     } else if (tokens[0].compare("smm") == 0) {
       // Suggest a move and move. Equivalent of sm, followed by m with the suggested move.
@@ -154,7 +154,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //   smm
       for (int moveNumber = 0; moveNumber < std::stoi(tokens[1], nullptr, 0); moveNumber++) {
         cout << "looking for move for board: " << endl << *gState;
-        WordEscapeMove move = gMiniMax->get_move(gState.get());
+        WordBaseMove move = gMiniMax->get_move(gState.get());
         cout << "making suggested move: " << gBoard->wordFromMove(move) << endl << move << endl;
         gState->make_move(move);
      }
@@ -173,7 +173,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //  m (0,1),(1,2)
       if (tokens.size() > 1) {
-        WordEscapeMove move(WordEscapeMove::parsePath(tokens[1]));
+        WordBaseMove move(WordBaseMove::parsePath(tokens[1]));
         cout << "making move: \"" << gBoard->wordFromMove(move) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {

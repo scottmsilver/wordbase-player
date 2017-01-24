@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "grid.h"
 #include "gtsa.hpp"
 
 const char PLAYER_1 = 1;
@@ -26,11 +27,11 @@ const char kOwnerMinimizer = 2;
 
 typedef std::vector<std::pair<int, int>> MoveSequence;
 
-struct WordEscapeMove : public Move<WordEscapeMove> {
+struct WordBaseMove : public Move<WordBaseMove> {
   MoveSequence mMove;
   
-  WordEscapeMove() { }
-  WordEscapeMove(const MoveSequence &move) : mMove(move) { }
+  WordBaseMove() { }
+  WordBaseMove(const MoveSequence &move) : mMove(move) { }
   
   // parsePath
   //
@@ -75,7 +76,7 @@ struct WordEscapeMove : public Move<WordEscapeMove> {
     return os;
   }
   
-  bool operator==(const WordEscapeMove &rhs) const override {
+  bool operator==(const WordBaseMove &rhs) const override {
     return std::equal(mMove.begin(), mMove.end(), rhs.mMove.begin());
   }
   
@@ -91,29 +92,6 @@ static inline std::string &rtrim(std::string &s) {
   return s;
 }
 
-// A simple two dimension grid of class T, height H and width W.
-// Represented efficiently as a single row major array.
-template<class T, int H, int W> class Grid {
-public:
-  typedef std::array<T, H * W> Container;
-  
-  // Initialize GridState by copying the underlying contents.
-  Grid(const Grid& state) : mState(state.mState) {}
-  
-  // Underlying contents have undefined value.
-  Grid() {}
-  
-  const T get(int y, int x) const { return mState[y * W + x]; }
-  void set(int y, int x, const T &value) { mState[y * W + x] = value; }
-  typename Container::const_iterator begin() const { return mState.begin(); }
-  typename Container::const_iterator end() const { return mState.end(); }
-  void fill(const T &value) { mState.fill(value); }
-  bool operator==(const Grid<T, H, W>& rhs) const { return mState == rhs.mState;}
-  
-private:
-  Container mState;
-  const T& operator[](int pos) { return mState[pos]; }
-};
 
 class BoardStatic {
   std::unordered_set<std::string> mWords;
@@ -175,7 +153,7 @@ public:
   }
   
   // Return the word represented by the passed in sequence.
-  std::string wordFromMove(const WordEscapeMove& move) {
+  std::string wordFromMove(const WordBaseMove& move) {
     std::stringstream wordText;
     
     for (auto pathElement : move.mMove) {
@@ -247,13 +225,13 @@ public:
 };
 
 
-class WordEscapeGridState : public Grid<char, kBoardHeight, kBoardWidth> {
+class WordBaseGridState : public Grid<char, kBoardHeight, kBoardWidth> {
 public:
   // Initialize GridState by copying the underlying contents.
-  WordEscapeGridState(const WordEscapeGridState& state) : Grid<char, kBoardHeight, kBoardWidth>(state) {}
+  WordBaseGridState(const WordBaseGridState& state) : Grid<char, kBoardHeight, kBoardWidth>(state) {}
   
   // Initialize GridState to an unused board.
-  WordEscapeGridState() : Grid() {
+  WordBaseGridState() : Grid() {
     fill(kOwnerUnowned);
     for (int x = 0; x < kBoardWidth; x++) {
       set(0, x, PLAYER_1);
@@ -262,69 +240,67 @@ public:
   }
 };
 
-// Functor to help compare too moves on the basis of their heuristic score.
+// Functor to help compare two moves on the basis of their heuristic score.
 struct Goodness {
   char mPlayerToMove;
   
   Goodness(char playerToMove) : mPlayerToMove(playerToMove) {}
   
-  bool operator()(const WordEscapeMove& i, const WordEscapeMove& j) const {
-    return mPlayerToMove == PLAYER_1 ? goodnessSorterMax(i, j) :
-    goodnessSorterMin(i, j);
+  bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
+    return mPlayerToMove == PLAYER_1 ? goodnessSorterMax(i, j) : goodnessSorterMin(i, j);
   }
   
-  bool goodnessSorterMin(const WordEscapeMove& i, const WordEscapeMove& j) const {
-    int h_i = 0;
-    for (auto x : i.mMove) {
-      h_i += (x.first - kBoardHeight) * (x.first - kBoardHeight);
-    }
-    
-    int h_j = 0;
-    for (auto x : j.mMove) {
-      h_j += (x.first - kBoardHeight) * (x.first - kBoardHeight);
-    }
-    
-    return h_i > h_j;
+  bool goodnessSorterMin(const WordBaseMove& i, const WordBaseMove& j) const {
+    return minimizerGoodness(i) > minimizerGoodness(j);
   }
-  
-  bool goodnessSorterMax(const WordEscapeMove& i, const WordEscapeMove& j) const {
-    int h_i = 0;
-    
-    for (auto x : i.mMove) {
-      h_i += (x.first + 1) * (x.first + 1);
+
+  int minimizerGoodness(const WordBaseMove& move) const {
+    int minimizerGoodness = 0;
+    for (auto x : move.mMove) {
+      minimizerGoodness += (x.first - kBoardHeight) * (x.first - kBoardHeight);
     }
-    
-    int h_j = 0;
-    
-    for (auto x : j.mMove) {
-      h_j += (x.first + 1) * (x.first + 1);
+
+    return minimizerGoodness;
+  }
+
+  int maximizerGoodness(const WordBaseMove& move) const {
+    int maximizerGoodness = 0;
+    for (auto x : move.mMove) {
+      maximizerGoodness += (x.first + 1) * (x.first + 1);
     }
-    
-    return h_i > h_j;
+
+    return maximizerGoodness;
+  }
+
+  bool goodnessSorterMax(const WordBaseMove& i, const WordBaseMove& j) const {
+    return maximizerGoodness(i) > maximizerGoodness(j);
   }
 };
 
 
-// State of WordEscape board.
-struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
-  WordEscapeGridState mState;
+// State of WordBase board.
+struct WordBaseState : public State<WordBaseState, WordBaseMove> {
+  WordBaseGridState mState;
   std::unordered_set<string> mPlayedWords;
-  
   BoardStatic* mBoard;
   
-  WordEscapeState(BoardStatic* board, char playerToMove) : State<WordEscapeState, WordEscapeMove>(playerToMove), mBoard(board) {
+  WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
   }
-  
-  WordEscapeState(const WordEscapeState& rhs) : State<WordEscapeState, WordEscapeMove>(rhs.player_to_move), mBoard(rhs.mBoard), mState(rhs.mState) {
+
+  // Copy state from an old state.
+  WordBaseState(const WordBaseState& rhs) :
+    State<WordBaseState, WordBaseMove>(rhs.player_to_move),
+    mBoard(rhs.mBoard),
+    mState(rhs.mState) {
     for (auto x : rhs.mPlayedWords) {
       mPlayedWords.insert(x);
     }
   }
   
-  WordEscapeState clone() const override {
-    return WordEscapeState(*this);
+  WordBaseState clone() const override {
+    return WordBaseState(*this);
   }
   
   // Place bombs at each point in the supplied sequence.
@@ -376,16 +352,16 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
   
   // Return all the legal moves from this current state, only consider a maximum
   // of max_moves moves.
-  vector<WordEscapeMove> get_legal_moves(int max_moves = INF) const override {
+  vector<WordBaseMove> get_legal_moves(int max_moves = INF) const override {
     return get_legal_moves(max_moves, NULL);
   }
   
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
-  vector<WordEscapeMove> get_legal_moves(int max_moves, const char* filter) const {
+  vector<WordBaseMove> get_legal_moves(int max_moves, const char* filter) const {
     // Maintain an ordered set, ordered by "goodness" which is a heuristic for whether
     // we think the move is likely to be very good.
-    std::multiset<WordEscapeMove, Goodness> movesAsSet((Goodness(player_to_move)));
+    std::multiset<WordBaseMove, Goodness> movesAsSet((Goodness(player_to_move)));
     
     // Look at all possible words from each grid and discard those
     // that are already used or should be filtered out by request.
@@ -395,7 +371,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
           for (auto&& validWordPathsEntry : mBoard->findValidWordPaths(y, x) ) {
             if (mPlayedWords.find(validWordPathsEntry.first) == mPlayedWords.end()) {
               if (filter == NULL || validWordPathsEntry.first.compare(filter) == 0) {
-                movesAsSet.insert(WordEscapeMove(validWordPathsEntry.second));
+                movesAsSet.insert(WordBaseMove(validWordPathsEntry.second));
               }
             }
           }
@@ -405,7 +381,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
     
     // Turn this set back into a vector. Perhaps consider changing the protocol
     // to return not a vector..
-    std::vector<WordEscapeMove> moves(movesAsSet.size());
+    std::vector<WordBaseMove> moves(movesAsSet.size());
     std::copy(movesAsSet.begin(), movesAsSet.end(), moves.begin());
     
     return moves;
@@ -477,7 +453,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
     }
   }
   
-  void recordMove(const WordEscapeMove& move) {
+  void recordMove(const WordBaseMove& move) {
     // FIX-ME OMG this is lame, just fix move so it has the string itself or an int representing the string.
     // The part that is that I end up rebuilding the word from the grid, which we
     // should know a priori.
@@ -542,7 +518,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
   }
   
   // Make a move, change the current player to the other after doing this.
-  void make_move(const WordEscapeMove& move) override {
+  void make_move(const WordBaseMove& move) override {
     // Make the move.
     recordMove(move);
     
@@ -560,7 +536,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
     player_to_move = get_enemy(player_to_move);
   }
   
-  void undo_move(const WordEscapeMove &move) override {
+  void undo_move(const WordBaseMove &move) override {
     // This doesn't work and is a weird anachronism of the
     // alpha-beta engine. We can't trivially undo our state
     // without essentially saving our old sate; so we have the
@@ -572,7 +548,7 @@ struct WordEscapeState : public State<WordEscapeState, WordEscapeMove> {
     return os;
   }
   
-  bool operator==(const WordEscapeState &other) const override {
+  bool operator==(const WordBaseState &other) const override {
     return mState == other.mState && mPlayedWords == other.mPlayedWords;
   }
   
@@ -637,8 +613,8 @@ char ownerText(char owner) {
   return ownerText;
 }
 
-// Print out the a WordEscapeState.
-std::ostream& operator<<(std::ostream& os, const WordEscapeState& foo) {
+// Print out the a WordBaseState.
+std::ostream& operator<<(std::ostream& os, const WordBaseState& foo) {
   os << boost::format("player(%d): h=%d") % int(foo.player_to_move) % foo.get_goodness() << std::endl;
   
   os << "  ";

@@ -1,5 +1,10 @@
-#include "gtest/gtest.h"
+#include <sstream>
 #include <string>
+#include <unordered_set>
+
+#include "board.h"
+#include "gtest/gtest.h"
+#include "word-dictionary.h"
 
 namespace {
 
@@ -35,9 +40,11 @@ namespace {
 
   // Tests that the Foo::Bar() method does Abc.
   TEST_F(FooTest, MethodBarDoesAbc) {
-    const std::string input_filepath = "this/package/testdata/myinputfile.dat";
-    const std::string output_filepath = "this/package/testdata/myoutputfile.dat";
-    //    Foo f;
+    std::istringstream dictionaryFileContents(std::string("cao\n"));
+    WordDictionary wd(dictionaryFileContents);
+
+    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
+    board.findValidWordPaths(0, 0);
     EXPECT_EQ(0, 0);
   }
 

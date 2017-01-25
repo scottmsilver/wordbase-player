@@ -28,10 +28,10 @@ INITIALIZE_EASYLOGGINGPP
 std::unique_ptr<BoardStatic> gBoard;
 std::unique_ptr<WordBaseState> gState;
 std::unique_ptr<Minimax<WordBaseState, WordBaseMove>> gMiniMax(new Minimax<WordBaseState, WordBaseMove>(10, INF));
-
+std::unique_ptr<WordDictionary> gDictionary;
 
 static bool doOneCommand(const char* dictionaryPath, const std::string& command) {
-  bool notQuit = true;
+  bool notQuit = true;  
 
   // Break up command string into space delimited tokens.
   std::vector<std::string> tokens;
@@ -61,7 +61,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //   lm
       for (auto move : gState->get_legal_moves()) {
-        cout << gBoard->wordFromMove(move) << ":" << move << endl;
+        cout << gBoard->wordFromMove(move.getMoveSequence()) << ":" << move << endl;
       }
     } else if (tokens[0].compare("l") == 0) {
       // Load commands from file and execute them.
@@ -72,7 +72,6 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
         cout << "file name required: l /foo/goo/roo" << endl;
       } else {
         std::ifstream input(tokens[1]);
-        
         for (std::string line; getline(input, line);) {
           doOneCommand(dictionaryPath, line);
         }
@@ -114,7 +113,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage
       //   nb caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg
       //   nb bitumrahtrnsatesgoepevsrnpyes*insaewidanseimrufsgetmaugoitsnixtlherkpuodetsaficdascgatrfornihcnejustogteiryoachlobpengopobirbuscebd
-      gBoard.reset(new BoardStatic(tokens[1], dictionaryPath));
+      gBoard.reset(new BoardStatic(tokens[1], *gDictionary));
       gState.reset(new WordBaseState(gBoard.get(), PLAYER_1));
     } else if (tokens[0].compare("sm") == 0) {
       // Suggest a move.
@@ -146,7 +145,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       gMiniMax->setUseTranspositionTable(useTranspositionTable);
       gMiniMax->setUseNewIterator(useNewIterator);
       WordBaseMove move = gMiniMax->get_move(gState.get());
-      cout << "suggested move: " << gBoard->wordFromMove(move) << endl << move << endl;
+      cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
     } else if (tokens[0].compare("smm") == 0) {
       // Suggest a move and move. Equivalent of sm, followed by m with the suggested move.
       //
@@ -155,7 +154,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       for (int moveNumber = 0; moveNumber < std::stoi(tokens[1], nullptr, 0); moveNumber++) {
         cout << "looking for move for board: " << endl << *gState;
         WordBaseMove move = gMiniMax->get_move(gState.get());
-        cout << "making suggested move: " << gBoard->wordFromMove(move) << endl << move << endl;
+        cout << "making suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
         gState->make_move(move);
      }
     } else if (tokens[0].compare("h") == 0) {
@@ -174,7 +173,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //  m (0,1),(1,2)
       if (tokens.size() > 1) {
         WordBaseMove move(WordBaseMove::parsePath(tokens[1]));
-        cout << "making move: \"" << gBoard->wordFromMove(move) << "\": " << move << std::endl;
+        cout << "making move: \"" << gBoard->wordFromMove(move.getMoveSequence()) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {
         cout << "argument required: m (1,2),(2,3)" << endl;
@@ -197,13 +196,22 @@ const char* kDefaultDictionaryPath = "/Users/ssilver/Google Drive/development/wo
 
 int main(int argc, char** argv) {
   START_EASYLOGGINGPP(argc, argv);
+
+  const char* dictionaryPath = argc > 1 ? argv[1] : kDefaultDictionaryPath;
+  cout << "Using dictionary at '" << dictionaryPath << "'" << endl;
+
+  std::ifstream input(dictionaryPath);
+  if (!input.is_open()) {
+    throw std::runtime_error("Could not open dictionary file: \"" + string(dictionaryPath) + "\"");
+  }
+
+  input.exceptions(std::ifstream::badbit);
+  gDictionary.reset(new WordDictionary(input));
+  
   // Configure readline to auto-complete paths when the tab key is hit.
   rl_bind_key('\t', rl_complete);
   bool notQuit = true;
-  
-  const char* dictionaryPath = argc > 1 ? argv[1] : kDefaultDictionaryPath;
-  
-  cout << "Using dictionary at '" << dictionaryPath << "'" << endl;
+
   while (notQuit) {
     std::unique_ptr<char, decltype(free) *> input {readline("boardshell> "), free};
     

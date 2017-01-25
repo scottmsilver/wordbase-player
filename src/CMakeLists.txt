@@ -30,6 +30,8 @@ endif()
 add_executable(example example.cpp)
 target_link_libraries(example gtest_main)
 add_test(NAME example_test COMMAND example)
+set_property(TARGET example PROPERTY CXX_STANDARD 11)
+set_property(TARGET example PROPERTY CXX_STANDARD_REQUIRED ON)
 
 project(WordBase CXX)
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)

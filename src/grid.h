@@ -1,5 +1,10 @@
-// A simple two dimension grid of class T, height H and width W.
-// Represented efficiently as a single row major array.
+#ifndef GRID_H
+#define GRID_H
+
+#include <array>
+
+// A simple two dimensional grid of class T, height H and width W.
+// We represent it efficiently as a single row major array.
 template<class T, int H, int W> class Grid {
 public:
   typedef std::array<T, H * W> Container;
@@ -21,3 +26,5 @@ private:
   Container mState;
   const T& operator[](int pos) { return mState[pos]; }
 };
+
+#endif

@@ -39,13 +39,21 @@ namespace {
   };
 
   // Tests that the Foo::Bar() method does Abc.
-  TEST_F(FooTest, MethodBarDoesAbc) {
+  TEST_F(FooTest, SimpleWordsAtGridSquare) {
     std::istringstream dictionaryFileContents(std::string("cao\n"));
     WordDictionary wd(dictionaryFileContents);
-
     BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
-    board.findValidWordPaths(0, 0);
-    EXPECT_EQ(0, 0);
+    const std::vector<std::pair<std::string, MoveSequence>>& wordPaths = board.findValidWordPaths(0, 0);
+    EXPECT_EQ(wordPaths.size(), 1);
+
+    const MoveSequence& wordPath = wordPaths[0].second;
+
+    EXPECT_EQ(wordPath[0].first, 0);
+    EXPECT_EQ(wordPath[0].second, 0);
+    EXPECT_EQ(wordPath[1].first, 0);
+    EXPECT_EQ(wordPath[1].second, 1);
+    EXPECT_EQ(wordPath[2].first, 0);
+    EXPECT_EQ(wordPath[2].second, 2);
   }
 
   // Tests that Foo does Xyz.

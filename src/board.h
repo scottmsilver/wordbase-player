@@ -12,10 +12,17 @@
 const int kBoardHeight = 13;
 const int kBoardWidth = 10;
 
-// A Wordbase board with no state.
+// A Wordbase board.
 class BoardStatic {
+  // A map, indexed by the "grid key" of all the valid word paths at the given square in the grid.
+  // The key is a "grid key" which is y * kBoardWidth + x.
+  // FIX-ME(ssilver): Change this to use a Grid<> type.
   std::unordered_map<int, std::vector<std::pair<std::string, MoveSequence>>> mValidWordPathsGrid;
+
+  // The location of the bombs on the board; each entry in the MoveSequence is the location of a bomb.
   MoveSequence mBombs;
+
+  // The location of the mega-bombs on the board; each entry in the MoveSequence is the location of a mega-bomb.
   MoveSequence mMegabombs;
   
  public:
@@ -80,6 +87,10 @@ class BoardStatic {
     return pathsAtGridIterator->second;
   }
   
+  const MoveSequence& getBombs() const { return mBombs; }
+  const MoveSequence& getMegabombs() const { return mMegabombs; }
+
+ private:
   // Adds all valid words from given grid square to a map.
   void findWordPaths(int y, int x, std::string prefix, MoveSequence prefixPath,
                      std::vector<std::pair<std::string, MoveSequence>>& validWordPaths) {
@@ -117,11 +128,7 @@ class BoardStatic {
     findWordPaths(y + 1, x - 1, prefix, prefixPath, validWordPaths);
     findWordPaths(y + 1, x, prefix, prefixPath, validWordPaths);
     findWordPaths(y + 1, x + 1, prefix, prefixPath, validWordPaths);
-  }
-  
-  const MoveSequence& getBombs() const { return mBombs; }
-  const MoveSequence& getMegabombs() const { return mMegabombs; }
-
+  }  
 };
 
 #endif

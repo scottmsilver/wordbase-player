@@ -13,8 +13,8 @@
 
 #include <editline/readline.h>
 #include <memory>
-#include <iterator>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <stdlib.h>
 #include <string>

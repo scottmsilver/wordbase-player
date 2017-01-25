@@ -8,12 +8,17 @@
 
 #include "string-util.h"
 
+// Simple dictionary loaded from a stream that can answer
+// hasWord() and hasPrefix().
+// Implemented via sets.
 class WordDictionary {
  private:
   std::unordered_set<std::string> mWords;
   std::unordered_set<std::string> mPrefixes;
 
  public:
+  // Construct a new WordDictionary from a stream.
+  // Stream assumed to have one word in the dictionary per line.
   WordDictionary(std::istream& dictionaryStream) {
     std::string line;
     while (getline(dictionaryStream, line)) {
@@ -26,7 +31,11 @@ class WordDictionary {
     }
   }
 
+  // Return true if word is in the dictionary.
   bool hasWord(const std::string& word) { return mWords.find(word) != mWords.end(); }
+
+  // Return true if prefix is a prefix of a word in the dictionary.
+  // NB: prefix only returns true for words of length >= 2.
   bool hasPrefix(const std::string& prefix) { return mPrefixes.find(prefix) != mPrefixes.end(); }
 };
 

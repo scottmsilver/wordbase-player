@@ -78,7 +78,7 @@ struct Goodness {
 };
 
 
-// State of WordBase board.
+// State of Wordbase game..
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseGridState mState;
   std::unordered_set<string> mPlayedWords;
@@ -117,7 +117,6 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     
     // First look for the terminal conditions.
     // FIX-ME combine this with is_terminal, with one that can say which player was terminal.ps
-    
     for (int x = 0; x < kBoardWidth; x++) {
       if (mState.get(0, x) == PLAYER_2) {
         h = -INF;
@@ -252,13 +251,17 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       recordOne(y + 1, x - 1);
     }
   }
-  
+
+  // Record a single move in the game. Iterates through each grid square, claiming that square.
   void recordMove(const WordBaseMove& move) {
-    // FIX-ME OMG this is lame, just fix move so it has the string itself or an int representing the string.
+    // FIX-ME(ssilver) OMG this is lame, just fix move so it has the string itself or an int representing the string.
     // The part that is that I end up rebuilding the word from the grid, which we
     // should know a priori.
     std::string word;
     
+    // The first letter of the word must be owend by the current player.
+    // FIX-ME(ssilver): Either throw an exception or make it so clients have to only submit moves that are from
+    // the list of valid ones. 
     if (move.mMove.size() > 0) {
       assert(mState.get(move.mMove[0].first, move.mMove[0].second) == player_to_move);
     }

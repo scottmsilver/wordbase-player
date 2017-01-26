@@ -4,12 +4,13 @@
 #include <array>
 #include <vector>
 
-//typedef std::vector<std::pair<int, int>> MoveSequence;
-
+// Represents a sequence of moves. 
+// The pairs are intended to be (y, x) coordinates.
 class MoveSequence : public std::vector<std::pair<int, int>> {
  public:
-  
- MoveSequence(const std::vector<std::pair<int, int>> & sequence) : std::vector<std::pair<int, int>>(sequence) {}
+
+  // Simple constructor used for unit tests.
+  MoveSequence(const std::vector<std::pair<int, int>> & sequence) : std::vector<std::pair<int, int>>(sequence) {}
   
   MoveSequence() {}
 };

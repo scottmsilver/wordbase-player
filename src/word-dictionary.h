@@ -32,11 +32,11 @@ class WordDictionary {
   }
 
   // Return true if word is in the dictionary.
-  bool hasWord(const std::string& word) { return mWords.find(word) != mWords.end(); }
+  bool hasWord(const std::string& word) const { return mWords.find(word) != mWords.end(); }
 
   // Return true if prefix is a prefix of a word in the dictionary.
   // NB: prefix only returns true for words of length >= 2.
-  bool hasPrefix(const std::string& prefix) { return mPrefixes.find(prefix) != mPrefixes.end(); }
+  bool hasPrefix(const std::string& prefix) const { return mPrefixes.find(prefix) != mPrefixes.end(); }
 };
 
 #endif

@@ -27,7 +27,7 @@ class BoardStatic {
   
  public:
   std::vector<char> mGrid;
-  WordDictionary& mDictionary;
+  const WordDictionary& mDictionary;
   
   // Create a new board.
   //
@@ -35,7 +35,7 @@ class BoardStatic {
   //   width kBoardWidth. They should be lower case characters. A * or a + before an item
   //   means bomb and megabomb.
   // dictionary 
-  BoardStatic(const std::string& gridText, WordDictionary& dictionary) : mDictionary(dictionary) {
+  BoardStatic(const std::string& gridText, const WordDictionary& dictionary) : mDictionary(dictionary) {
     // Build a new grid from the string, ignore spaces.
     int y = 0;
     int x = 0;

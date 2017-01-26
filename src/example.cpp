@@ -38,29 +38,16 @@ namespace {
     // Objects declared here can be used by all tests in the test case for Foo.
   };
 
-  // Tests that the Foo::Bar() method does Abc.
+  // Tests that we can find all the valid word paths in a grid.
   TEST_F(FooTest, SimpleWordsAtGridSquare) {
     std::istringstream dictionaryFileContents(std::string("cao\n"));
-    WordDictionary wd(dictionaryFileContents);
-    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
+    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", WordDictionary(dictionaryFileContents));
+
     const std::vector<std::pair<std::string, MoveSequence>>& wordPaths = board.findValidWordPaths(0, 0);
     EXPECT_EQ(wordPaths.size(), 1);
-
-    const MoveSequence& wordPath = wordPaths[0].second;
-
-    EXPECT_EQ(wordPath[0].first, 0);
-    EXPECT_EQ(wordPath[0].second, 0);
-    EXPECT_EQ(wordPath[1].first, 0);
-    EXPECT_EQ(wordPath[1].second, 1);
-    EXPECT_EQ(wordPath[2].first, 0);
-    EXPECT_EQ(wordPath[2].second, 2);
+    EXPECT_EQ(wordPaths[0].first.compare("cao"), 0);
+    EXPECT_EQ(wordPaths[0].second, MoveSequence({{0, 0}, {0, 1}, {0, 2}})); 
   }
-
-  // Tests that Foo does Xyz.
-  TEST_F(FooTest, DoesXyz) {
-    // Exercises the Xyz feature of Foo.
-  }
-
 }  // namespace
 
 

@@ -41,7 +41,8 @@ namespace {
   // Tests that we can find all the valid word paths in a grid.
   TEST_F(FooTest, SimpleWordsAtGridSquare) {
     std::istringstream dictionaryFileContents(std::string("cao\n"));
-    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", WordDictionary(dictionaryFileContents));
+    WordDictionary wd(dictionaryFileContents);
+    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
 
     const std::vector<std::pair<std::string, MoveSequence>>& wordPaths = board.findValidWordPaths(0, 0);
     EXPECT_EQ(wordPaths.size(), 1);

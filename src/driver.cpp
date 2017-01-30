@@ -1,16 +1,25 @@
-//
-//  driver.cpp
-//  wordescape
-//
-//  Created by Scott Silver on 6/12/16.
-//  Copyright © 2016 Scott Silver. All rights reserved.
-//
+/*
+ driver.cpp
+ Copyright (C) 2016 Scott Silver.
+ 
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #include <algorithm>
 #include <boost/iterator/filter_iterator.hpp>
 #include <boost/range/adaptors.hpp>
 #include <boost/range/algorithm.hpp>
-
 #include <editline/readline.h>
 #include <memory>
 #include <iostream>
@@ -25,11 +34,20 @@
 
 INITIALIZE_EASYLOGGINGPP
 
-std::unique_ptr<BoardStatic> gBoard;
-std::unique_ptr<WordBaseState> gState;
-std::unique_ptr<Minimax<WordBaseState, WordBaseMove>> gMiniMax(new Minimax<WordBaseState, WordBaseMove>(10, INF));
+// Default dictionary file.
+const char* kDefaultDictionaryPath = "/Users/ssilver/Google Drive/development/wordescape/c/gtsa/cpp/twl06.txt";
+
+// The dictionary to use for this game.
 std::unique_ptr<WordDictionary> gDictionary;
 
+// The board to use.
+std::unique_ptr<BoardStatic> gBoard;
+
+// The state of the board.
+std::unique_ptr<WordBaseState> gState;
+
+
+// Do a single command from our command parser.
 static bool doOneCommand(const char* dictionaryPath, const std::string& command) {
   bool notQuit = true;  
 
@@ -108,7 +126,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, true);
     } else if (tokens[0].compare("nb") == 0) {
-      // New board. Pre-pending the letter with a "*" puts a bomb ath that spot.
+      // New board. Pre-pending the letter with a "*" puts a bomb at that spot, a + is a "megabomb"
       //
       // Usage
       //   nb caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg
@@ -134,29 +152,25 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       if (tokens.size() > 3) {
         useTranspositionTable = tokens[3].compare("true") == 0;
       }
-      
-      bool useNewIterator = false;
-      if (tokens.size() > 4) {
-        useNewIterator = tokens[4].compare("true") == 0;;
-      }
-      
-      gMiniMax->setMaxDepth(maxDepth);
-      gMiniMax->setMaxSeconds(maxSeconds);
-      gMiniMax->setUseTranspositionTable(useTranspositionTable);
-      gMiniMax->setUseNewIterator(useNewIterator);
-      WordBaseMove move = gMiniMax->get_move(gState.get());
+
+      Minimax<WordBaseState, WordBaseMove> miniMax(maxSeconds, maxDepth);
+      miniMax.setUseTranspositionTable(useTranspositionTable);
+      WordBaseMove move = miniMax.get_move(gState.get());
       cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
-    } else if (tokens[0].compare("smm") == 0) {
-      // Suggest a move and move. Equivalent of sm, followed by m with the suggested move.
+    } else if (tokens[0].compare("smmc") == 0) {
+      // Use a montecarlo search tree method to suggest a move
       //
-      // Usage
-      //   smm
-      for (int moveNumber = 0; moveNumber < std::stoi(tokens[1], nullptr, 0); moveNumber++) {
-        cout << "looking for move for board: " << endl << *gState;
-        WordBaseMove move = gMiniMax->get_move(gState.get());
-        cout << "making suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
-        gState->make_move(move);
-     }
+      // Usage:
+      //   seconds - time in seconds to search.
+      double maxSeconds = 3;
+      if (tokens.size() > 1) {
+        maxSeconds = std::stod(tokens[1], nullptr);
+      }
+
+      MonteCarloTreeSearch<WordBaseState, WordBaseMove> montecarlo(maxSeconds);
+
+      WordBaseMove move = montecarlo.get_move(gState.get());
+      cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
     } else if (tokens[0].compare("h") == 0) {
       // Return the current h() / "goodness" of the current game.
       //
@@ -192,11 +206,10 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
   return notQuit;
 }
 
-const char* kDefaultDictionaryPath = "/Users/ssilver/Google Drive/development/wordescape/c/gtsa/cpp/twl06.txt";
-
 int main(int argc, char** argv) {
   START_EASYLOGGINGPP(argc, argv);
 
+  // Determine dictionary file to use and print out exception if not found.
   const char* dictionaryPath = argc > 1 ? argv[1] : kDefaultDictionaryPath;
   cout << "Using dictionary at '" << dictionaryPath << "'" << endl;
 

@@ -1,3 +1,21 @@
+/*
+ wordescape.cpp
+ Copyright (C) 2016 Scott Silver.
+ 
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include <algorithm>
 #include <boost/functional/hash.hpp>
 #include <boost/format.hpp>
@@ -295,8 +313,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       markConnected(y, x - 1, owner);
       markConnected(y, x + 1, owner);
       markConnected(y + 1, x - 1, owner);
-      markConnected(y + 1, x, owner);
-      markConnected(y + 1, x + 1, owner);
+      markConnected(y + 1, x, owner);      markConnected(y + 1, x + 1, owner);
     }
   }
   
@@ -337,14 +354,6 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     
     // Change to the new player.
     player_to_move = get_enemy(player_to_move);
-  }
-  
-  void undo_move(const WordBaseMove &move) override {
-    // This doesn't work and is a weird anachronism of the
-    // alpha-beta engine. We can't trivially undo our state
-    // without essentially saving our old sate; so we have the
-    // caller do that on its stack.
-    assert(false);
   }
   
   ostream &to_stream(ostream &os) const override {

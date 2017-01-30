@@ -188,8 +188,6 @@ struct State {
   
   virtual void make_move(const M &move) = 0;
   
-  virtual void undo_move(const M &move) = 0;
-  
   virtual ostream &to_stream(ostream &os) const = 0;
   
   friend ostream &operator<<(ostream &os, const State &state) {
@@ -298,6 +296,17 @@ public:
 };
 
 template<class S, class M>
+class StateUndoer {
+private:
+  S mSavedState;
+  S& mStateToUndo;
+
+public:
+  StateUndoer(S& state) : mSavedState(state), mStateToUndo(state) {}
+  ~StateUndoer() { mStateToUndo = mSavedState; }
+};
+
+template<class S, class M>
 struct Minimax : public Algorithm<S, M> {
   unordered_map<size_t, TTEntry<M>> transposition_table;
   double MAX_SECONDS;
@@ -309,7 +318,6 @@ struct Minimax : public Algorithm<S, M> {
   int nodes, leafs;
   int mMaxDepth;
   bool mUseTranspositionTable;
-  bool mUseNewIterator;
   
   Minimax(double max_seconds = 10, int max_moves = INF, function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
@@ -318,7 +326,7 @@ struct Minimax : public Algorithm<S, M> {
   MAX_MOVES(max_moves),
   get_goodness(get_goodness),
   timer(Timer()),
-  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(false), mUseNewIterator(false) {}
+  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(false) {}
   
   void reset() override {
     transposition_table.clear();
@@ -334,10 +342,6 @@ struct Minimax : public Algorithm<S, M> {
   
   void setUseTranspositionTable(bool useTranspositionTable) {
     mUseTranspositionTable = useTranspositionTable;
-  }
-  
-  void setUseNewIterator(bool useNewIterator) {
-    mUseNewIterator = useNewIterator;
   }
   
   M get_move(S *state) override {
@@ -432,33 +436,37 @@ struct Minimax : public Algorithm<S, M> {
       for (int i = 0; i < legal_moves.size(); i++) {
         M move = legal_moves[i];
         
-        S preMoveState(*state);
-        state->make_move(move);
+        {
+          StateUndoer<S, M> undoer(*state);
+          
+          state->make_move(move);
+          
+          const int goodness = -minimax(
+                                        state,
+                                        depth - 1,
+                                        -beta,
+                                        -alpha,
+                                        indent + 1).goodness;
+          LOG(DEBUG) << *state << endl;
         
-        const int goodness = -minimax(
-                                      state,
-                                      depth - 1,
-                                      -beta,
-                                      -alpha,
-                                      indent + 1).goodness;
-        LOG(DEBUG) << *state << endl;
-        //state->undo_move(move); (was undo, but now is put back copy above)
-        *state = preMoveState;
         
-        if (timer.exceeded(MAX_SECONDS)) {
-          completed = false;
-          break;
-        }
-        if (max_goodness < goodness) {
-          max_goodness = goodness;
-          best_move = move;
-          LOG(DEBUG) << "choosing --> h(" << goodness << ")" << best_move << endl;
-          if (max_goodness >= beta) {
-            ++beta_cuts;
-            cut_bf_sum += i + 1;
+          if (timer.exceeded(MAX_SECONDS)) {
+            completed = false;
             break;
           }
+          
+          if (max_goodness < goodness) {
+            max_goodness = goodness;
+            best_move = move;
+            LOG(DEBUG) << "choosing --> h(" << goodness << ")" << best_move << endl;
+            if (max_goodness >= beta) {
+              ++beta_cuts;
+              cut_bf_sum += i + 1;
+              break;
+            }
+          }
         }
+        
         if (alpha < max_goodness) {
           alpha = max_goodness;
         }
@@ -507,6 +515,7 @@ struct Minimax : public Algorithm<S, M> {
     return "Minimax";
   }
 };
+
 
 template<class S, class M>
 struct MonteCarloTreeSearch : public Algorithm<S, M> {
@@ -643,17 +652,18 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     return legal_moves[index];
   }
   
+  
   shared_ptr<M> get_winning_move(S *state) {
     auto current_player = state->player_to_move;
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
     for (M &move : legal_moves) {
-      state->make_move(move);
-      if (state->is_winner(current_player)) {
-        state->undo_move(move);
-        return make_shared<M>(move);
+      StateUndoer<S,M> undoer(*state); {
+	state->make_move(move);
+	if (state->is_winner(current_player)) {
+	  return make_shared<M>(move);
+	}
       }
-      state->undo_move(move);
     }
     return nullptr;
   }
@@ -665,13 +675,13 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
     for (M &move : legal_moves) {
-      state->make_move(move);
-      if (state->is_winner(enemy)) {
-        state->undo_move(move);
-        state->player_to_move = current_player;
-        return make_shared<M>(move);
+      StateUndoer<S,M> undoer(*state); {
+	state->make_move(move);
+	if (state->is_winner(enemy)) {
+	  state->player_to_move = current_player;
+	  return make_shared<M>(move);
+	}
       }
-      state->undo_move(move);
     }
     state->player_to_move = current_player;
     return nullptr;
@@ -718,10 +728,11 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
       return DRAW_SCORE;
     }
     M move = get_default_policy_move(current);
-    current->make_move(move);
-    auto result = rollout(current, root);
-    current->undo_move(move);
-    return result;
+    StateUndoer<S,M> undoer(*current); {
+      current->make_move(move);
+      auto result = rollout(current, root);
+      return result;
+    }
   }
   
   string get_name() const override {

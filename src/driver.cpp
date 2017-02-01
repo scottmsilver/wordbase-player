@@ -79,7 +79,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //   lm
       for (auto move : gState->get_legal_moves()) {
-        cout << gBoard->wordFromMove(move.getMoveSequence()) << ":" << move << endl;
+        cout << gBoard->wordFromMove(move.getCoordinateList()) << ":" << move << endl;
       }
     } else if (tokens[0].compare("l") == 0) {
       // Load commands from file and execute them.
@@ -114,7 +114,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  bombs (3,3),(1,2)
-      MoveSequence sequence(WordBaseMove::parsePath(tokens[1]));
+      CoordinateList sequence(WordBaseMove::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, false);
     } else if (tokens[0].compare("mbombs") == 0) {
@@ -122,7 +122,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  mbombs (3,3),(1,2)
-      MoveSequence sequence(WordBaseMove::parsePath(tokens[1]));
+      CoordinateList sequence(WordBaseMove::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, true);
     } else if (tokens[0].compare("nb") == 0) {
@@ -156,7 +156,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       Minimax<WordBaseState, WordBaseMove> miniMax(maxSeconds, maxDepth);
       miniMax.setUseTranspositionTable(useTranspositionTable);
       WordBaseMove move = miniMax.get_move(gState.get());
-      cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
+      cout << "suggested move: " << gBoard->wordFromMove(move.getCoordinateList()) << endl << move << endl;
       WordBaseState state(*gState);
       state.make_move(move);
       cout << state << endl;
@@ -173,7 +173,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       MonteCarloTreeSearch<WordBaseState, WordBaseMove> montecarlo(maxSeconds);
 
       WordBaseMove move = montecarlo.get_move(gState.get());
-      cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
+      cout << "suggested move: " << gBoard->wordFromMove(move.getCoordinateList()) << endl << move << endl;
       WordBaseState state(*gState);
       state.make_move(move);
       cout << state << endl;
@@ -193,7 +193,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //  m (0,1),(1,2)
       if (tokens.size() > 1) {
         WordBaseMove move(WordBaseMove::parsePath(tokens[1]));
-        cout << "making move: \"" << gBoard->wordFromMove(move.getMoveSequence()) << "\": " << move << std::endl;
+        cout << "making move: \"" << gBoard->wordFromMove(move.getCoordinateList()) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {
         cout << "argument required: m (1,2),(2,3)" << endl;

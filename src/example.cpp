@@ -44,10 +44,10 @@ namespace {
     WordDictionary wd(dictionaryFileContents);
     BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
 
-    const std::vector<std::pair<std::string, MoveSequence>>& wordPaths = board.findValidWordPaths(0, 0);
+    const std::vector<std::pair<std::string, CoordinateList>>& wordPaths = board.findValidWordPaths(0, 0);
     EXPECT_EQ(wordPaths.size(), 1);
     EXPECT_EQ(wordPaths[0].first.compare("cao"), 0);
-    EXPECT_EQ(wordPaths[0].second, MoveSequence({{0, 0}, {0, 1}, {0, 2}})); 
+    EXPECT_EQ(wordPaths[0].second, CoordinateList({{0, 0}, {0, 1}, {0, 2}})); 
   }
 }  // namespace
 

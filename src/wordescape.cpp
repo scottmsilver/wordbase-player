@@ -122,7 +122,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   }
   
   // Place bombs at each point in the supplied sequence.
-  void putBomb(MoveSequence sequence, bool megaBomb) {
+  void putBomb(CoordinateList sequence, bool megaBomb) {
     for (auto&& bombPlace : sequence) {
       mState.set(bombPlace.first, bombPlace.second, megaBomb ? PLAYER_MEGABOMB : PLAYER_BOMB);
     }
@@ -375,7 +375,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
 
 // Print out a move sequence.
-std::ostream& operator<<(std::ostream& os, const MoveSequence& foo) {
+std::ostream& operator<<(std::ostream& os, const CoordinateList& foo) {
   bool first = true;
   for (auto&& sequenceElement : foo) {
     if (!first) {

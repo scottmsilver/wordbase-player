@@ -4,8 +4,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "coordinate-list.h"
 #include "grid.h"
-#include "move-sequence.h"
 #include "string-util.h"
 #include "word-dictionary.h"
 
@@ -17,13 +17,13 @@ class BoardStatic {
   // A map, indexed by the "grid key" of all the valid word paths at the given square in the grid.
   // The key is a "grid key" which is y * kBoardWidth + x.
   // FIX-ME(ssilver): Change this to use a Grid<> type.
-  std::unordered_map<int, std::vector<std::pair<std::string, MoveSequence>>> mValidWordPathsGrid;
+  std::unordered_map<int, std::vector<std::pair<std::string, CoordinateList>>> mValidWordPathsGrid;
 
-  // The location of the bombs on the board; each entry in the MoveSequence is the location of a bomb.
-  MoveSequence mBombs;
+  // The location of the bombs on the board; each entry in the CoordinateList is the location of a bomb.
+  CoordinateList mBombs;
 
-  // The location of the mega-bombs on the board; each entry in the MoveSequence is the location of a mega-bomb.
-  MoveSequence mMegabombs;
+  // The location of the mega-bombs on the board; each entry in the CoordinateList is the location of a mega-bomb.
+  CoordinateList mMegabombs;
   
  public:
   std::vector<char> mGrid;
@@ -60,7 +60,7 @@ class BoardStatic {
   }
   
   // Return the word represented by the passed in sequence.
-  std::string wordFromMove(const MoveSequence& move) {
+  std::string wordFromMove(const CoordinateList& move) {
     std::stringstream wordText;
     
     for (auto pathElement : move) {
@@ -72,29 +72,29 @@ class BoardStatic {
   
 
   // Return all the valid words for the given grid square.
-  const std::vector<std::pair<std::string, MoveSequence>>& findValidWordPaths(int y, int x) {
+  const std::vector<std::pair<std::string, CoordinateList>>& findValidWordPaths(int y, int x) {
     int gridKey = y * kBoardWidth + x;
     auto pathsAtGridIterator = mValidWordPathsGrid.find(gridKey);
     
     if (pathsAtGridIterator == mValidWordPathsGrid.end()) {
-      std::vector<std::pair<std::string, MoveSequence>> validWordPaths;
+      std::vector<std::pair<std::string, CoordinateList>> validWordPaths;
       
-      findWordPaths(y, x, "", MoveSequence(), validWordPaths);
+      findWordPaths(y, x, "", CoordinateList(), validWordPaths);
       pathsAtGridIterator = mValidWordPathsGrid.insert(
-        std::pair<int, std::vector<std::pair<std::string, MoveSequence>>>(
+        std::pair<int, std::vector<std::pair<std::string, CoordinateList>>>(
           gridKey, validWordPaths)).first;
     }
     
     return pathsAtGridIterator->second;
   }
   
-  const MoveSequence& getBombs() const { return mBombs; }
-  const MoveSequence& getMegabombs() const { return mMegabombs; }
+  const CoordinateList& getBombs() const { return mBombs; }
+  const CoordinateList& getMegabombs() const { return mMegabombs; }
 
  private:
   // Adds all valid words from given grid square to a map.
-  void findWordPaths(int y, int x, std::string prefix, MoveSequence prefixPath,
-                     std::vector<std::pair<std::string, MoveSequence>>& validWordPaths) {
+  void findWordPaths(int y, int x, std::string prefix, CoordinateList prefixPath,
+                     std::vector<std::pair<std::string, CoordinateList>>& validWordPaths) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
@@ -112,12 +112,12 @@ class BoardStatic {
     }
     
     prefix = std::string(prefix) + mGrid[y * kBoardWidth + x];
-    prefixPath = MoveSequence(prefixPath);
+    prefixPath = CoordinateList(prefixPath);
     prefixPath.push_back(std::pair<int, int>(y, x));
     
     // Keep track of our word as (word, path) if it's a real word.
     if (mDictionary.hasWord(prefix)) {
-      validWordPaths.push_back(std::pair<std::string, MoveSequence>(prefix, prefixPath));
+      validWordPaths.push_back(std::pair<std::string, CoordinateList>(prefix, prefixPath));
     }
     
     // Vist all neighbors.

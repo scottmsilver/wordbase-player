@@ -3,17 +3,17 @@
 #include <vector>
 
 struct WordBaseMove : public Move<WordBaseMove> {
-  MoveSequence mMove;
+  CoordinateList mMove;
   
   WordBaseMove() { }
-  WordBaseMove(const MoveSequence &move) : mMove(move) { }
+  WordBaseMove(const CoordinateList &move) : mMove(move) { }
   
   // parsePath
   //
   // Returns a vector of int, int pairs from a string in the format
   // (2, 3), (3, 4) ...
-  static MoveSequence parsePath(const std::string& s) {
-    MoveSequence path;
+  static CoordinateList parsePath(const std::string& s) {
+    CoordinateList path;
     
     std::regex words_regex("(\\(([0-9]+)\\s*,\\s*([0-9]+)\\)),?\\s*");
     
@@ -59,5 +59,5 @@ struct WordBaseMove : public Move<WordBaseMove> {
     return boost::hash_range(mMove.begin(), mMove.end());
   }
 
-  MoveSequence getMoveSequence() const { return mMove; }
+  CoordinateList getCoordinateList() const { return mMove; }
 };

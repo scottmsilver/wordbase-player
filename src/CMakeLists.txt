@@ -24,14 +24,18 @@ if (CMAKE_VERSION VERSION_LESS 2.8.11)
                       "${gmock_SOURCE_DIR}/include")
 endif()
  
-# Now simply link your own targets against gtest, gmock,
-# etc. as appropriate
-# Now simply link against gtest or gtest_main as needed. Eg
+# First test
 add_executable(example example.cpp)
 target_link_libraries(example gtest_main)
 add_test(NAME example_test COMMAND example)
 set_property(TARGET example PROPERTY CXX_STANDARD 11)
 set_property(TARGET example PROPERTY CXX_STANDARD_REQUIRED ON)
+
+# First test
+add_executable(perf-test perf-test.cpp)
+target_link_libraries(perf-test)
+set_property(TARGET perf-test PROPERTY CXX_STANDARD 11)
+set_property(TARGET perf-test PROPERTY CXX_STANDARD_REQUIRED ON)
 
 project(WordBase CXX)
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)

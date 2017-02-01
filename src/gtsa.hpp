@@ -516,7 +516,7 @@ struct Minimax : public Algorithm<S, M> {
   }
 };
 
-
+// https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
 template<class S, class M>
 struct MonteCarloTreeSearch : public Algorithm<S, M> {
   const double max_seconds;

@@ -70,6 +70,7 @@ class BoardStatic {
     return wordText.str();
   }
   
+
   // Return all the valid words for the given grid square.
   const std::vector<std::pair<std::string, MoveSequence>>& findValidWordPaths(int y, int x) {
     int gridKey = y * kBoardWidth + x;

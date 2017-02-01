@@ -96,7 +96,7 @@ struct Goodness {
 };
 
 
-// State of Wordbase game..
+// State of Wordbase game.
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseGridState mState;
   std::unordered_set<string> mPlayedWords;

@@ -157,6 +157,9 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       miniMax.setUseTranspositionTable(useTranspositionTable);
       WordBaseMove move = miniMax.get_move(gState.get());
       cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
+      WordBaseState state(*gState);
+      state.make_move(move);
+      cout << state << endl;
     } else if (tokens[0].compare("smmc") == 0) {
       // Use a montecarlo search tree method to suggest a move
       //
@@ -171,6 +174,9 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
 
       WordBaseMove move = montecarlo.get_move(gState.get());
       cout << "suggested move: " << gBoard->wordFromMove(move.getMoveSequence()) << endl << move << endl;
+      WordBaseState state(*gState);
+      state.make_move(move);
+      cout << state << endl;
     } else if (tokens[0].compare("h") == 0) {
       // Return the current h() / "goodness" of the current game.
       //

@@ -371,6 +371,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   const std::unordered_set<string>& getAlreadyPlayed() const {
     return mPlayedWords;
   }
+
+  void addAlreadyPlayed(const string& alreadyPlayed) {
+    mPlayedWords.insert(alreadyPlayed);
+  }
 };
 
 

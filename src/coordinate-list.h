@@ -3,6 +3,7 @@
 
 #include <array>
 #include <vector>
+#include <regex>
 
 // Represents a move, which is sequence of coordinates.
 // The coordinates are pairs in {y, x} (i.e row then column)
@@ -13,6 +14,28 @@ class CoordinateList : public std::vector<std::pair<int, int>> {
 
   // Construct an empty sequence.
   CoordinateList() {}
+
+  // parsePath
+  //
+  // Returns a vector of int, int pairs from a string in the format
+  // (2, 3), (3, 4) ...
+  static CoordinateList parsePath(const std::string& s) {
+    CoordinateList path;
+    
+    std::regex words_regex("(\\(([0-9]+)\\s*,\\s*([0-9]+)\\)),?\\s*");
+    
+    for (std::sregex_iterator i = std::sregex_iterator(s.begin(), s.end(), words_regex);
+         i != std::sregex_iterator(); ++i) {
+      std::smatch match = *i;
+      
+      int y = std::stoi(match[2], nullptr, 0);
+      int x = std::stoi(match[3], nullptr, 0);
+      path.push_back(std::pair<int, int>(y, x));
+    }
+    
+    return path;
+  }
+
 };
 
 #endif

@@ -114,7 +114,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  bombs (3,3),(1,2)
-      CoordinateList sequence(WordBaseMove::parsePath(tokens[1]));
+      CoordinateList sequence(CoordinateList::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, false);
     } else if (tokens[0].compare("mbombs") == 0) {
@@ -122,7 +122,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //
       // Usage
       //  mbombs (3,3),(1,2)
-      CoordinateList sequence(WordBaseMove::parsePath(tokens[1]));
+      CoordinateList sequence(CoordinateList::parsePath(tokens[1]));
       cout << "putting bombs at: " << sequence << endl;
       gState->putBomb(sequence, true);
     } else if (tokens[0].compare("nb") == 0) {
@@ -186,13 +186,18 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
     } else if (tokens[0].compare("ps") == 0) {
       // Print out the state of the current game.
       std::cout << *gState;
+    } else if (tokens[0].compare("add-ap") == 0) {
+      if (tokens.size() > 1) {
+        gState->addAlreadyPlayed(tokens[1]);
+	cout << "Added already played: " << tokens[1];
+      }
     } else if (tokens[0].compare("m") == 0) {
       // Make move. NB: Does not currently check if the move is legal.
       //
       // Usage:
       //  m (0,1),(1,2)
       if (tokens.size() > 1) {
-        WordBaseMove move(WordBaseMove::parsePath(tokens[1]));
+        WordBaseMove move(CoordinateList::parsePath(tokens[1]));
         cout << "making move: \"" << gBoard->wordFromMove(move.getCoordinateList()) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {

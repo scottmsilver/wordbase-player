@@ -14,8 +14,8 @@ public:
   
   // Underlying contents have undefined value.
   Grid() {}
-  
-  const T get(int y, int x) const { return mState[y * W + x]; }
+
+  const T& get(int y, int x) const { return mState[y * W + x]; }
   void set(int y, int x, const T &value) { mState[y * W + x] = value; }
   typename Container::const_iterator begin() const { return mState.begin(); }
   typename Container::const_iterator end() const { return mState.end(); }
@@ -24,7 +24,7 @@ public:
   
 private:
   Container mState;
-  const T& operator[](int pos) { return mState[pos]; }
+  T& operator[](int pos) const { return mState[pos]; }
 };
 
 #endif

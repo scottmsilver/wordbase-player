@@ -424,62 +424,67 @@ struct Minimax : public Algorithm<S, M> {
       }
     }
     
-    bool generate_moves = true;
     int max_goodness = -INF;
-    
     bool completed = true;
+    std::vector<M> legal_moves = state->get_legal_moves(MAX_MOVES);
+
+    assert(legal_moves.size() > 0);
+    bool found_best_move = false;
     
-    if (generate_moves) {
-      std::vector<M> legal_moves = state->get_legal_moves(MAX_MOVES);
-      
-      assert(legal_moves.size() > 0);
-      for (int i = 0; i < legal_moves.size(); i++) {
-        M move = legal_moves[i];
-        
-        {
-          StateUndoer<S, M> undoer(*state);
+    for (int i = 0; i < legal_moves.size(); i++) {
+      M move = legal_moves[i];
+
+      // Scope around StateUndoer is important here, so that it gets undone.
+      // FIX-ME to some cool macro thing that makes that clearer.
+      {
+	StateUndoer<S, M> undoer(*state);
           
-          state->make_move(move);
+	state->make_move(move);
+	const int goodness = -minimax(
+				      state,
+				      depth - 1,
+				      -beta,
+				      -alpha,
+				      indent + 1).goodness;
+	VLOG(9) << *state << endl;
+        
+	if (timer.exceeded(MAX_SECONDS)) {
+	  completed = false;
+	  break;
+	}
           
-          const int goodness = -minimax(
-                                        state,
-                                        depth - 1,
-                                        -beta,
-                                        -alpha,
-                                        indent + 1).goodness;
-          LOG(DEBUG) << *state << endl;
+	if (goodness > max_goodness) {
+	  max_goodness = goodness;
+	  best_move = move;
+	  found_best_move = true;
+	  VLOG(9) << "choosing --> h(" << goodness << ")" << best_move << endl;
+	  if (max_goodness >= beta) {
+	    ++beta_cuts;
+	    cut_bf_sum += i + 1;
+	    break;
+	  }
+	}
+      }
         
-        
-          if (timer.exceeded(MAX_SECONDS)) {
-            completed = false;
-            break;
-          }
-          
-          if (max_goodness < goodness) {
-            max_goodness = goodness;
-            best_move = move;
-            LOG(DEBUG) << "choosing --> h(" << goodness << ")" << best_move << endl;
-            if (max_goodness >= beta) {
-              ++beta_cuts;
-              cut_bf_sum += i + 1;
-              break;
-            }
-          }
-        }
-        
-        if (alpha < max_goodness) {
-          alpha = max_goodness;
-        }
-        
+      if (alpha < max_goodness) {
+	alpha = max_goodness;
       }
     }
     
     if (mUseTranspositionTable && completed) {
       update_tt(state, alpha_original, beta, max_goodness, best_move, depth);
     }
-    
+
+    // If no best move is found, then any move is good as any other.
+    // Perhaps just picking the zero'th move is better, since they are sorted,
+    // theoretically by best...
+    if (!found_best_move) {
+      best_move = legal_moves[random.uniform(0, legal_moves.size() - 1)];
+    }
     return {max_goodness, best_move, completed};
   }
+
+  Random random;
   
   bool get_tt_entry(S *state, TTEntry<M> &entry) {
     auto key = state->hash();

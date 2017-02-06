@@ -6,6 +6,8 @@
 #include "gtest/gtest.h"
 #include "word-dictionary.h"
 
+#include "wordescape.cpp"
+
 namespace {
 
   // The fixture for testing class Foo.
@@ -48,6 +50,26 @@ namespace {
     EXPECT_EQ(wordPaths.size(), 1);
     EXPECT_EQ(wordPaths[0].first.compare("cao"), 0);
     EXPECT_EQ(wordPaths[0].second, CoordinateList({{0, 0}, {0, 1}, {0, 2}})); 
+  }
+
+
+    // Tests that we can find all the valid word paths in a grid.
+  TEST_F(FooTest, SimpleWordsAtGridSquare2) {
+    std::istringstream dictionaryFileContents(std::string("cao\n"));
+    WordDictionary wd(dictionaryFileContents);
+    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
+    WordBaseState state(&board, PLAYER_1);
+    
+    const LegalWordList& wordList = board.getLegalWords(0, 0);
+    EXPECT_EQ(wordList.size(), 1);
+    const LegalWord& legalWord = board.getLegalWord(wordList[0]);
+    EXPECT_EQ(legalWord.mWord.compare("cao"), 0);
+    EXPECT_EQ(legalWord.mWordSequence, CoordinateList({{0, 0}, {0, 1}, {0, 2}}));
+
+    vector<WordBaseMove> moves = state.get_legal_moves2(10, NULL);
+    EXPECT_EQ(moves.size(), 1);
+    const LegalWord& legalWord2 = board.getLegalWord(moves[0].mLegalWordId);
+    EXPECT_EQ(legalWord2.mWordSequence, CoordinateList({{0, 0}, {0, 1}, {0, 2}}));
   }
 }  // namespace
 

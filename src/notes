@@ -1,0 +1,5 @@
+boostflywheel
+
+Basic idea would be to have the dictionary keep track of all possible moves indexed by a small integer.
+Each grid square would yield a set of possible moves.
+

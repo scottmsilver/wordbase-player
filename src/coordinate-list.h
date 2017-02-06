@@ -4,6 +4,7 @@
 #include <array>
 #include <vector>
 #include <regex>
+#include <boost/functional/hash/hash.hpp>
 
 // Represents a move, which is sequence of coordinates.
 // The coordinates are pairs in {y, x} (i.e row then column)
@@ -38,4 +39,13 @@ class CoordinateList : public std::vector<std::pair<int, int>> {
 
 };
 
+namespace std {
+  template <> struct hash<CoordinateList>
+  {
+    size_t operator()(const CoordinateList& x) const
+    {
+      return boost::hash_range(x.begin(), x.end());
+    }
+  };
+}
 #endif

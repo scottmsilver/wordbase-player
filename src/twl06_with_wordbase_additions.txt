@@ -5432,6 +5432,7 @@ anecdotical
 anecdotically
 anecdotist
 anecdotists
+ance
 anechoic
 anelastic
 anelasticities
@@ -135516,6 +135517,7 @@ rondure
 rondures
 ronion
 ronions
+ronne
 ronnel
 ronnels
 rontgen

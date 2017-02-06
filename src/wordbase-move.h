@@ -1,22 +1,25 @@
-#include <regex>
 #include <string>
-#include <vector>
 
 struct WordBaseMove : public Move<WordBaseMove> {
-  CoordinateList mMove;
+  //CoordinateList mMove;
+  LegalWordId mLegalWordId;
   
   WordBaseMove() { }
-  WordBaseMove(const CoordinateList &move) : mMove(move) { }
+  // WordBaseMove(const CoordinateList &move) : mMove(move) { }
+ WordBaseMove(const LegalWordId legalWordId) : mLegalWordId(legalWordId) { }
   
   void read() override {
-    cout << "Enter form of (Y, X),?+" << endl;
+    assert(false);
+        cout << "Enter form of (Y, X),?+" << endl;
     
     std::string line;
     std::getline(std::cin, line);
-    mMove = CoordinateList::parsePath(line);
+    //mMove = CoordinateList::parsePath(line);
   }
   
   ostream &to_stream(ostream &os) const override {
+    os << "lw(" << mLegalWordId << ")";
+    /*
     bool first = true;
     for (auto pathElement : mMove) {
       if (!first) {
@@ -26,17 +29,17 @@ struct WordBaseMove : public Move<WordBaseMove> {
       os << "(" << pathElement.first << "," << pathElement.second << ")";
       first = false;
     }
-    
+    */
     return os;
-  }
+    }
   
   bool operator==(const WordBaseMove &rhs) const override {
-    return std::equal(mMove.begin(), mMove.end(), rhs.mMove.begin());
+    return mLegalWordId == rhs.mLegalWordId;
+    //return std::equal(mMove.begin(), mMove.end(), rhs.mMove.begin());
   }
   
   size_t hash() const override {
-    return boost::hash_range(mMove.begin(), mMove.end());
+    return mLegalWordId; // FIX-ME(ssilver) bad hash
+    //    return boost::hash_range(mMove.begin(), mMove.end());
   }
-
-  CoordinateList getCoordinateList() const { return mMove; }
 };

@@ -81,10 +81,10 @@ struct Goodness {
 // State of Wordbase game.
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseGridState mState;
-  std::unordered_set<std::string> mPlayedWords;
   BoardStatic* mBoard;
+  std::vector<bool> mPlayedWords;
   
-  WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board) {
+  WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board), mPlayedWords(mBoard->getLegalWordsSize(), false) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
   }
@@ -93,10 +93,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseState(const WordBaseState& rhs) :
     State<WordBaseState, WordBaseMove>(rhs.player_to_move),
     mBoard(rhs.mBoard),
-    mState(rhs.mState) {
-    for (auto x : rhs.mPlayedWords) {
-      mPlayedWords.insert(x);
-    }
+    mState(rhs.mState), mPlayedWords(rhs.mPlayedWords) {
   }
   
   WordBaseState clone() const override {
@@ -188,10 +185,9 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 	  auto legalWords = mBoard->getLegalWords(y, x);
           for (auto&& legalWordId : legalWords) {
 	    // Ensure already played words are ignored.
-	    const LegalWord& legalWord = mBoard->getLegalWord(legalWordId);
-            if (mPlayedWords.find(legalWord.mWord) == mPlayedWords.end()) {
-              if (filter == NULL || legalWord.mWord.compare(filter) == 0) {
-                moves.push_back(WordBaseMove(legalWord.mId));
+            if (!mPlayedWords[legalWordId]) {
+              if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
+                moves.push_back(WordBaseMove(legalWordId));
 	      }
 	    }
 	  }
@@ -271,26 +267,22 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
   // Record a single move in the game. Iterates through each grid square, claiming that square.
   void recordMove(const WordBaseMove& move) {
-    // FIX-ME(ssilver) OMG this is lame, just fix move so it has the string itself or an int representing the string.
-    // The part that is that I end up rebuilding the word from the grid, which we
-    // should know a priori.
-    std::string word;
-    
     // The first letter of the word must be owend by the current player.
-    // FIX-ME(ssilver): Either throw an exception or make it so clients have to only submit moves that are from
-    // the list of valid ones.
-    const LegalWord& legalWord = mBoard->getLegalWord(move.mLegalWordId);
-    const CoordinateList& wordSequence = legalWord.mWordSequence;
+    const CoordinateList& wordSequence = mBoard->getLegalWord(move.mLegalWordId).mWordSequence;
     if (wordSequence.size() > 0) {
       assert(mState.get(wordSequence[0].first, wordSequence[0].second) == player_to_move);
     }
-    
+
+    // Record each letter.
     for (const auto& pathElement : wordSequence) {
-      word += mBoard->mGrid[pathElement.first * kBoardWidth + pathElement.second];
       recordOne(pathElement.first, pathElement.second);
     }
-    
-    mPlayedWords.insert(word);
+
+    // Mark this word as played.
+    std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(mBoard->getLegalWordIds(mBoard->getLegalWord(move.mLegalWordId).mWord));
+    for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
+      mPlayedWords[i->second] = true;      
+    }
   }
   
   // Starting at (y, x) mark all grid squares that are connected to (y, x).
@@ -369,12 +361,24 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     return boost::hash_range(mState.begin(), mState.end());
   }
   
-  const std::unordered_set<std::string>& getAlreadyPlayed() const {
-    return mPlayedWords;
+  const std::vector<std::string> getAlreadyPlayed() const {
+    std::vector<std::string> alreadyPlayed;
+
+    for (int curId = 0; curId < mPlayedWords.size(); curId++) {
+      if (mPlayedWords[curId]) {
+	alreadyPlayed.push_back(mBoard->getLegalWord(curId).mWord);
+      }
+    }
+
+    return alreadyPlayed;
   }
 
   void addAlreadyPlayed(const std::string& alreadyPlayed) {
-    mPlayedWords.insert(alreadyPlayed);
+    for (int curId = 0; curId < mPlayedWords.size(); curId++) {
+      if (mBoard->getLegalWord(curId).mWord.compare(alreadyPlayed) == 0) {
+	mPlayedWords[curId] = true;
+      }
+    }
   }
 };
 

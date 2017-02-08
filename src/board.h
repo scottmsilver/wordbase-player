@@ -22,12 +22,15 @@ struct LegalWord {
   int mMinimizerGoodness;
 };
 
+typedef std::vector<int> LegalWordList;
+
 class LegalWordFactory {
   int mNextId;
   //  std::unordered_map<int, LegalWord> mLegalWordMap;
   std::vector<LegalWord> mLegalWordMap;
   std::unordered_map<CoordinateList, LegalWord> mCoordinateListMap;
-
+  std::multimap<std::string, LegalWordId> mWordToLegalWordIds;
+    
  public:
   LegalWordFactory() : mNextId(0) { }
   
@@ -38,12 +41,13 @@ class LegalWordFactory {
     }
 
     LegalWord legalWord = {mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness};
+
     // FIX-ME we're making copies of this LegalWord, perhaps consider shared_ptr or that other boost-y thing for dealing with a singel table.
     mLegalWordMap.resize(legalWord.mId + 1);
     mLegalWordMap[legalWord.mId] = legalWord;
-    //mLegalWordMap.insert(std::pair<int, LegalWord>(legalWord.mId, legalWord));
     mCoordinateListMap.insert(std::pair<CoordinateList, LegalWord>(wordSequence, legalWord));
-
+    mWordToLegalWordIds.insert(std::pair<std::string, LegalWordId>(word, legalWord.mId));
+			       
     return legalWord.mId;
   }
   
@@ -55,6 +59,12 @@ class LegalWordFactory {
     }
   }
 
+  // Return the beginning and end of range of all LegalWordIds with this same word.
+  std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
+    return mWordToLegalWordIds.equal_range(word);
+  }
+      
+ 
   const LegalWord& getWord(const CoordinateList& coordinateList) const {
     auto legalWordIterator = mCoordinateListMap.find(coordinateList);
     if (legalWordIterator != mCoordinateListMap.end()) {
@@ -63,9 +73,11 @@ class LegalWordFactory {
       throw;
     }
   }
+
+  int getSize() const { return mNextId; }
 };
 
-typedef std::vector<int> LegalWordList;
+
 
 // A Wordbase board.
 class BoardStatic {
@@ -126,6 +138,13 @@ class BoardStatic {
     return mLegalWordFactory.getWord(coordinateList);
   }
 
+  int getLegalWordsSize() { return mLegalWordFactory.getSize(); }
+
+  // Return the beginning and end of range of all LegalWordIds with this same word.
+  std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
+    return mLegalWordFactory.getLegalWordIds(word);
+  }
+  
   // Return the word represented by the passed in sequence.
   std::string wordFromMove(const CoordinateList& move) {
     std::stringstream wordText;

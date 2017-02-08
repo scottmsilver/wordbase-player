@@ -41,19 +41,6 @@ namespace {
   };
 
   // Tests that we can find all the valid word paths in a grid.
-  TEST_F(FooTest, SimpleWordsAtGridSquare) {
-    std::istringstream dictionaryFileContents(std::string("cao\n"));
-    WordDictionary wd(dictionaryFileContents);
-    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
-
-    const std::vector<std::pair<std::string, CoordinateList>>& wordPaths = board.findValidWordPaths(0, 0);
-    EXPECT_EQ(wordPaths.size(), 1);
-    EXPECT_EQ(wordPaths[0].first.compare("cao"), 0);
-    EXPECT_EQ(wordPaths[0].second, CoordinateList({{0, 0}, {0, 1}, {0, 2}})); 
-  }
-
-
-    // Tests that we can find all the valid word paths in a grid.
   TEST_F(FooTest, SimpleWordsAtGridSquare2) {
     std::istringstream dictionaryFileContents(std::string("cao\n"));
     WordDictionary wd(dictionaryFileContents);
@@ -66,7 +53,7 @@ namespace {
     EXPECT_EQ(legalWord.mWord.compare("cao"), 0);
     EXPECT_EQ(legalWord.mWordSequence, CoordinateList({{0, 0}, {0, 1}, {0, 2}}));
 
-    vector<WordBaseMove> moves = state.get_legal_moves2(10, NULL);
+    std::vector<WordBaseMove> moves = state.get_legal_moves(10, NULL);
     EXPECT_EQ(moves.size(), 1);
     const LegalWord& legalWord2 = board.getLegalWord(moves[0].mLegalWordId);
     EXPECT_EQ(legalWord2.mWordSequence, CoordinateList({{0, 0}, {0, 1}, {0, 2}}));

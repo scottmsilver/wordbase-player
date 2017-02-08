@@ -13,12 +13,12 @@ int main(int argc, char **argv) {
   if (argc > 1) {
     std::ifstream input(argv[1]);
     if (!input.is_open()) {
-      throw std::runtime_error("Could not open dictionary file: \"" + string(argv[1]) + "\"");
+      throw std::runtime_error("Could not open dictionary file: \"" + std::string(argv[1]) + "\"");
     }
 
     WordDictionary wd(input);
-    BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
+    BoardStatic board("temenoldhpiaipclraer*sodhtitvsttlasmuhinauahvomagiesceolinyrmkedrnatslaidroerdeimlyodsngntagntiairagtwievuedlonaludsgpy*hlbetinagmac", wd);
     WordBaseState state(&board, PLAYER_1);
-    WordBaseMove move = Minimax<WordBaseState, WordBaseMove>(10,10).get_move(&state);
+    WordBaseMove move = Minimax<WordBaseState, WordBaseMove>(30,10).get_move(&state);
   }
 }

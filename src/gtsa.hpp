@@ -30,7 +30,6 @@
 #include <random>
 #include "easylogging++.h"
 
-using namespace std;
 
 static const int MAX_SIMULATIONS = 10000000;
 static const double UCT_C = sqrt(2);
@@ -42,12 +41,12 @@ static const int MAX_DEPTH = 20;
 static const int INF = 2147483647;
 
 struct Random {
-  mt19937 engine;
+  std::mt19937 engine;
   
   virtual ~Random() {}
   
   int uniform(int min, int max) {
-    return uniform_int_distribution<int>{min, max}(engine);
+    return std::uniform_int_distribution<int>{min, max}(engine);
   }
 };
 
@@ -74,8 +73,8 @@ struct Timer {
     return seconds_elapsed() > seconds;
   }
   
-  friend ostream &operator<<(ostream &os, const Timer &timer) {
-    return os << setprecision(2) << fixed << timer.seconds_elapsed() << "s";
+  friend std::ostream &operator<<(std::ostream &os, const Timer &timer) {
+    return os << std::setprecision(2) << std::fixed << timer.seconds_elapsed() << "s";
   }
 };
 
@@ -85,9 +84,9 @@ struct Move {
   
   virtual void read() = 0;
   
-  virtual ostream &to_stream(ostream &os) const = 0;
+  virtual std::ostream &to_stream(std::ostream &os) const = 0;
   
-  friend ostream &operator<<(ostream &os, const Move &move) {
+  friend std::ostream &operator<<(std::ostream &os, const Move &move) {
     return move.to_stream(os);
   }
   
@@ -112,11 +111,11 @@ struct TTEntry {
   TTEntry(const M &move, int depth, int value, TTEntryType value_type) :
   move(move), depth(depth), value(value), value_type(value_type) {}
   
-  ostream &to_stream(ostream &os) {
+ std::ostream &to_stream(std::ostream &os) {
     return os << "move: " << move << " depth: " << depth << " value: " << value << " value_type: " << value_type;
   }
   
-  friend ostream &operator<<(ostream &os, const TTEntry &entry) {
+  friend std::ostream &operator<<(std::ostream &os, const TTEntry &entry) {
     return entry.to_stream(os);
   }
 };
@@ -128,7 +127,7 @@ struct State {
   double score = 0;
   char player_to_move = 0;
   S *parent = nullptr;
-  unordered_map<size_t, shared_ptr<S>> children = unordered_map<size_t, shared_ptr<S>>();
+  std::unordered_map<size_t, std::shared_ptr<S>> children = std::unordered_map<size_t, std::shared_ptr<S>>();
   
   State(char player_to_move) : player_to_move(player_to_move) {}
   
@@ -148,11 +147,11 @@ struct State {
     return (score / visits) + c * sqrt(log(parent_visits) / visits);
   }
   
-  shared_ptr<S> create_child(M &move) {
+  std::shared_ptr<S> create_child(M &move) {
     S child = clone();
     child.make_move(move);
     child.parent = (S*) this;
-    return make_shared<S>(child);
+    return std::make_shared<S>(child);
   }
   
   S* add_child(M &move) {
@@ -178,7 +177,7 @@ struct State {
   
   virtual int get_goodness() const = 0;
   
-  virtual vector<M> get_legal_moves(int max_moves) const = 0;
+  virtual std::vector<M> get_legal_moves(int max_moves) const = 0;
   
   virtual char get_enemy(char player) const = 0;
   
@@ -188,9 +187,9 @@ struct State {
   
   virtual void make_move(const M &move) = 0;
   
-  virtual ostream &to_stream(ostream &os) const = 0;
+  virtual std::ostream &to_stream(std::ostream &os) const = 0;
   
-  friend ostream &operator<<(ostream &os, const State &state) {
+  friend std::ostream &operator<<(std::ostream &os, const State &state) {
     return state.to_stream(os);
   }
   
@@ -211,9 +210,9 @@ struct Algorithm {
   
   virtual M get_move(S *state) = 0;
   
-  virtual string get_name() const = 0;
+  virtual std::string get_name() const = 0;
   
-  friend ostream &operator<<(ostream &os, const Algorithm &algorithm) {
+  friend std::ostream &operator<<(std::ostream &os, const Algorithm &algorithm) {
     os << algorithm.get_name();
     return os;
   }
@@ -224,11 +223,11 @@ struct Human : public Algorithm<S, M> {
   Human() : Algorithm<S, M>() {}
   
   M get_move(S *state) override {
-    const vector<M> &legal_moves = state->get_legal_moves();
+    const std::vector<M> &legal_moves = state->get_legal_moves();
     if (legal_moves.empty()) {
-      stringstream stream;
+      std::stringstream stream;
       state->to_stream(stream);
-      throw invalid_argument("Given state is terminal:\n" + stream.str());
+      throw std::invalid_argument("Given state is terminal:\n" + stream.str());
     }
     while (true) {
       M move = M();
@@ -236,12 +235,12 @@ struct Human : public Algorithm<S, M> {
       if (find(legal_moves.begin(), legal_moves.end(), move) != legal_moves.end()) {
         return move;
       } else {
-        cout << "Move " << move << " is not legal" << endl;
+        std::cout << "Move " << move << " is not legal" << std::endl;
       }
     }
   }
   
-  string get_name() const {
+  std::string get_name() const {
     return "Human";
   }
 };
@@ -308,10 +307,10 @@ public:
 
 template<class S, class M>
 struct Minimax : public Algorithm<S, M> {
-  unordered_map<size_t, TTEntry<M>> transposition_table;
+  std::unordered_map<size_t, TTEntry<M>> transposition_table;
   double MAX_SECONDS;
   const int MAX_MOVES;
-  function<int(S*)> get_goodness;
+  std::function<int(S*)> get_goodness;
   Timer timer;
   int beta_cuts, cut_bf_sum;
   int tt_hits, tt_exacts, tt_cuts;
@@ -319,14 +318,14 @@ struct Minimax : public Algorithm<S, M> {
   int mMaxDepth;
   bool mUseTranspositionTable;
   
-  Minimax(double max_seconds = 10, int max_moves = INF, function<int(S*)> get_goodness = nullptr) :
+  Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
-  transposition_table(unordered_map<size_t, TTEntry<M>>(1000000)),
+  transposition_table(std::unordered_map<size_t, TTEntry<M>>(1000000)),
   MAX_SECONDS(max_seconds),
   MAX_MOVES(max_moves),
   get_goodness(get_goodness),
   timer(Timer()),
-  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(false) {}
+  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true) {}
   
   void reset() override {
     transposition_table.clear();
@@ -346,17 +345,17 @@ struct Minimax : public Algorithm<S, M> {
   
   M get_move(S *state) override {
     if (state->is_terminal()) {
-      stringstream stream;
+      std::stringstream stream;
       state->to_stream(stream);
-      throw invalid_argument("Given state is terminal:\n" + stream.str());
+      throw std::invalid_argument("Given state is terminal:\n" + stream.str());
     }
     if (get_goodness == nullptr) {
-      get_goodness = bind(&State<S,M>::get_goodness, state);
+      get_goodness = std::bind(&State<S,M>::get_goodness, state);
     }
     timer.start();
     M best_move;
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
-      LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << endl;
+      LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       beta_cuts = 0;
       cut_bf_sum = 0;
       tt_hits = 0;
@@ -364,12 +363,12 @@ struct Minimax : public Algorithm<S, M> {
       tt_cuts = 0;
       nodes = 0;
       leafs = 0;
-      LOG(DEBUG) << *state << endl;
+      LOG(DEBUG) << *state << std::endl;
       
       auto result = minimax(state, max_depth, -INF, INF, 0);
       if (result.completed) {
         best_move = result.best_move;
-        cout << "goodness: " << result.goodness
+        std::cout << "goodness: " << result.goodness
         << " time: " << timer
         << " move: " << best_move
         << " nodes: " << nodes
@@ -380,13 +379,13 @@ struct Minimax : public Algorithm<S, M> {
         << " tt_exacts: " << tt_exacts
         << " tt_cuts: " << tt_cuts
         << " tt_size: " << transposition_table.size()
-        << " max_depth: " << max_depth << endl;
+        << " max_depth: " << max_depth << std::endl;
       }
-      LOG(DEBUG) << " } ---------------------d(" << max_depth << ")------------------------------------" << endl;
+      LOG(DEBUG) << " } ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       if (timer.exceeded(MAX_SECONDS)) {
         break;
       }
-      cout << (double) nodes / timer.seconds_elapsed() << " nodes/s" << endl;
+      std::cout << (double) nodes / timer.seconds_elapsed() << " nodes/s" << std::endl;
     }
     return best_move;
   }
@@ -446,7 +445,7 @@ struct Minimax : public Algorithm<S, M> {
 				      -beta,
 				      -alpha,
 				      indent + 1).goodness;
-	VLOG(9) << *state << endl;
+	VLOG(9) << *state << std::endl;
         
 	if (timer.exceeded(MAX_SECONDS)) {
 	  completed = false;
@@ -457,7 +456,7 @@ struct Minimax : public Algorithm<S, M> {
 	  max_goodness = goodness;
 	  best_move = move;
 	  found_best_move = true;
-	  VLOG(9) << "choosing --> h(" << goodness << ")" << best_move << endl;
+	  VLOG(9) << "choosing --> h(" << goodness << ")" << best_move << std::endl;
 	  if (max_goodness >= beta) {
 	    ++beta_cuts;
 	    cut_bf_sum += i + 1;
@@ -516,7 +515,7 @@ struct Minimax : public Algorithm<S, M> {
     add_tt_entry(state, entry);
   }
   
-  string get_name() const override {
+  std::string get_name() const override {
     return "Minimax";
   }
 };
@@ -539,9 +538,9 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
   
   M get_move(S *root) override {
     if (root->is_terminal()) {
-      stringstream stream;
+      std::stringstream stream;
       root->to_stream(stream);
-      throw invalid_argument("Given state is terminal:\n" + stream.str());
+      throw std::invalid_argument("Given state is terminal:\n" + stream.str());
     }
     Timer timer;
     timer.start();
@@ -550,10 +549,10 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
       monte_carlo_tree_search(root);
       ++simulation;
     }
-    LOG(DEBUG) << "ratio: " << root->score / root->visits << endl;
-    LOG(DEBUG) << "simulations: " << simulation << endl;
+    LOG(DEBUG) << "ratio: " << root->score / root->visits << std::endl;
+    LOG(DEBUG) << "simulations: " << simulation << std::endl;
     auto legal_moves = root->get_legal_moves();
-    LOG(DEBUG) << "moves: " << legal_moves.size() << endl;
+    LOG(DEBUG) << "moves: " << legal_moves.size() << std::endl;
     for (auto move : legal_moves) {
       LOG(DEBUG) << "move: " << move;
       auto child = root->get_child(move);
@@ -562,7 +561,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
         << " visits: " << child->visits
         << " UCT: " << child->get_uct(UCT_C);
       }
-      LOG(DEBUG) << endl;
+      LOG(DEBUG) << std::endl;
     }
     return get_most_visited_move(root);
   }
@@ -658,7 +657,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
   }
   
   
-  shared_ptr<M> get_winning_move(S *state) {
+  std::shared_ptr<M> get_winning_move(S *state) {
     auto current_player = state->player_to_move;
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
@@ -666,14 +665,14 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
       StateUndoer<S,M> undoer(*state); {
 	state->make_move(move);
 	if (state->is_winner(current_player)) {
-	  return make_shared<M>(move);
+	  return std::make_shared<M>(move);
 	}
       }
     }
     return nullptr;
   }
   
-  shared_ptr<M> get_blocking_move(S *state) {
+  std::shared_ptr<M> get_blocking_move(S *state) {
     auto current_player = state->player_to_move;
     auto enemy = state->get_enemy(current_player);
     state->player_to_move = enemy;
@@ -684,7 +683,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
 	state->make_move(move);
 	if (state->is_winner(enemy)) {
 	  state->player_to_move = current_player;
-	  return make_shared<M>(move);
+	  return std::make_shared<M>(move);
 	}
       }
     }
@@ -740,7 +739,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
   }
   
-  string get_name() const override {
+  std::string get_name() const override {
     return "MonteCarloTreeSearch";
   }
   
@@ -774,12 +773,12 @@ struct Tester {
         current.swap_players();
       }
       if (VERBOSE) {
-        LOG(DEBUG) << current << endl;
+        LOG(DEBUG) << current << std::endl;
       }
       while (!current.is_terminal()) {
         auto &algorithm = (current.player_to_move == root->player_to_move) ? algorithm_1 : algorithm_2;
         if (VERBOSE) {
-          LOG(DEBUG) << current.player_to_move << " " << algorithm << endl;
+          LOG(DEBUG) << current.player_to_move << " " << algorithm << std::endl;
         }
         algorithm.reset();
         Timer timer;
@@ -787,36 +786,36 @@ struct Tester {
         auto copy = current.clone();
         auto move = algorithm.get_move(&copy);
         if (VERBOSE) {
-          cout << algorithm.read_log();
-          cout << timer << endl;
+          std::cout << algorithm.read_log();
+          std::cout << timer << std::endl;
         }
         current.make_move(move);
         if (VERBOSE) {
-          cout << current << endl;
+          std::cout << current << std::endl;
         }
       }
-      cout << "Match " << i << ": ";
+      std::cout << "Match " << i << ": ";
       if (current.is_winner(root->player_to_move)) {
         ++algorithm_1_wins;
-        cout << root->player_to_move << " " << algorithm_1 << " won" << endl;
+        std::cout << root->player_to_move << " " << algorithm_1 << " won" << std::endl;
       } else if (current.is_winner(enemy)) {
         ++algorithm_2_wins;
-        cout << enemy << " " << algorithm_2 << " won" << endl;
+        std::cout << enemy << " " << algorithm_2 << " won" << std::endl;
       } else {
         ++draws;
-        cout << "draw" << endl;
+        std::cout << "draw" << std::endl;
       }
-      cout << root->player_to_move << " " << algorithm_1 << " wins: " << algorithm_1_wins << endl;
-      cout << enemy << " " << algorithm_2 << " wins: " << algorithm_2_wins << endl;
-      cout << "Draws: " << draws << endl;
+      std::cout << root->player_to_move << " " << algorithm_1 << " wins: " << algorithm_1_wins << std::endl;
+      std::cout << enemy << " " << algorithm_2 << " wins: " << algorithm_2_wins << std::endl;
+      std::cout << "Draws: " << draws << std::endl;
       double successes = algorithm_1_wins + 0.5 * draws;
       double ratio = successes / i;
-      cout << "Ratio: " << ratio << endl;
+      std::cout << "Ratio: " << ratio << std::endl;
       double lower = boost::math::binomial_distribution<>::find_lower_bound_on_p(i, successes, SIGNIFICANCE_LEVEL);
       double upper = boost::math::binomial_distribution<>::find_upper_bound_on_p(i, successes, SIGNIFICANCE_LEVEL);
-      cout << "Lower confidence bound: " << lower << endl;
-      cout << "Upper confidence bound: " << upper << endl;
-      cout << endl;
+      std::cout << "Lower confidence bound: " << lower << std::endl;
+      std::cout << "Upper confidence bound: " << upper << std::endl;
+      std::cout << std::endl;
       if (upper < 0.5 || lower > 0.5) {
         break;
       }

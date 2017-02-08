@@ -17,8 +17,7 @@
 */
 
 #include <algorithm>
-#include <boost/functional/hash.hpp>
-#include <boost/format.hpp>
+#include <boost/sort/spreadsort/spreadsort.hpp>
 #include <cstddef>
 #include <fstream>
 #include <regex>
@@ -70,32 +69,11 @@ struct Goodness {
   }
   
   bool goodnessSorterMin(const WordBaseMove& i, const WordBaseMove& j) const {
-    return minimizerGoodness(i) > minimizerGoodness(j);
-  }
-
-  int minimizerGoodness(const WordBaseMove& move) const {
-    int minimizerGoodness = 0;
-
-    const CoordinateList& moveSequence = mBoard.getLegalWord(move.mLegalWordId).mWordSequence;
-    for (auto x : moveSequence) {
-      minimizerGoodness += (x.first - kBoardHeight) * (x.first - kBoardHeight);
-    }
-
-    return minimizerGoodness;
-  }
-
-  int maximizerGoodness(const WordBaseMove& move) const {
-    int maximizerGoodness = 0;
-    const CoordinateList& moveSequence = mBoard.getLegalWord(move.mLegalWordId).mWordSequence;
-    for (auto x : moveSequence) {
-      maximizerGoodness += (x.first + 1) * (x.first + 1);
-    }
-
-    return maximizerGoodness;
+    return mBoard.getLegalWord(i.mLegalWordId).mMinimizerGoodness > mBoard.getLegalWord(j.mLegalWordId).mMinimizerGoodness;
   }
 
   bool goodnessSorterMax(const WordBaseMove& i, const WordBaseMove& j) const {
-    return maximizerGoodness(i) > maximizerGoodness(j);
+    return mBoard.getLegalWord(i.mLegalWordId).mMaximizerGoodness > mBoard.getLegalWord(j.mLegalWordId).mMaximizerGoodness; 
   }
 };
 
@@ -103,7 +81,7 @@ struct Goodness {
 // State of Wordbase game.
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseGridState mState;
-  std::unordered_set<string> mPlayedWords;
+  std::unordered_set<std::string> mPlayedWords;
   BoardStatic* mBoard;
   
   WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board) {
@@ -170,88 +148,62 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     
     return h * color;
   }
-  
+
   // Return all the legal moves from this current state, only consider a maximum
   // of max_moves moves.
-  vector<WordBaseMove> get_legal_moves(int max_moves = INF) const override {
-    return get_legal_moves2(max_moves, NULL);
+  std::vector<WordBaseMove> get_legal_moves(int max_moves = INF) const override {
+    return get_legal_moves(max_moves, NULL);
   }
 
-   // Return a list of legal moves filtered by an optional filter and sorted
-  // by most likely to be the "best" move.
-  // filter must exactly match the found move, keeping in mind that the same
-  // word may appear through multiple paths.
-  // Also note that words which are already played are excluded.
-  vector<WordBaseMove> get_legal_moves2(int max_moves, const char* filter) const {
-    // Maintain an ordered set, ordered by "goodness" which is a heuristic for whether
-    // we think the move is likely to be very good.
-    std::multiset<WordBaseMove, Goodness> movesAsSet((Goodness(*mBoard, player_to_move)));
+  // Right shift the sorted value in WordBaseMove (the correct heuristic value)
+  // for use with spreadsort.
+  struct rightshift {
+    char mPlayerToMove;
+    const BoardStatic& mBoard;
     
-    // For each letter owned by the current player find candidate words and filter
-    // them appropriately.
-    for (int y = 0; y < kBoardHeight; y++) {
-      for (int x = 0; x < kBoardWidth; x++) {
-        if (mState.get(y, x) == player_to_move) {
-          for (auto&& legalWordId : mBoard->getLegalWords(y, x) ) {
-	    // Ensure already played words are ignored.
-	    const LegalWord& legalWord = mBoard->getLegalWord(legalWordId);
-            if (mPlayedWords.find(legalWord.mWord) == mPlayedWords.end()) {
-              if (filter == NULL || legalWord.mWord.compare(filter) == 0) {
-                movesAsSet.insert(WordBaseMove(legalWord.mId));
-              }
-            }
-          }
-        }
-      }
+    rightshift(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
+
+    inline int operator()(const WordBaseMove & x, unsigned offset) {
+      int heuristicValue = (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mMinimizerGoodness;
+      
+      return heuristicValue >> offset;
     }
-
-    // Turn this set back into a vector. Perhaps consider changing the protocol
-    // to return not a vector..
-    std::vector<WordBaseMove> moves(movesAsSet.size());
-    std::copy(movesAsSet.begin(), movesAsSet.end(), moves.begin());
-    
-    return moves;
-  }
- 
+  };
+  
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
   // filter must exactly match the found move, keeping in mind that the same
   // word may appear through multiple paths.
   // Also note that words which are already played are excluded.
-  vector<WordBaseMove> get_legal_moves(int max_moves, const char* filter) const {
-    return get_legal_moves2(max_moves, filter);
-    
+  std::vector<WordBaseMove> get_legal_moves(int max_moves, const char* filter) const {
     // Maintain an ordered set, ordered by "goodness" which is a heuristic for whether
     // we think the move is likely to be very good.
-    std::multiset<WordBaseMove, Goodness> movesAsSet((Goodness(*mBoard, player_to_move)));
+    std::vector<WordBaseMove> moves;
     
     // For each letter owned by the current player find candidate words and filter
     // them appropriately.
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         if (mState.get(y, x) == player_to_move) {
-          for (auto&& validWordPathsEntry : mBoard->findValidWordPaths(y, x) ) {
+	  auto legalWords = mBoard->getLegalWords(y, x);
+          for (auto&& legalWordId : legalWords) {
 	    // Ensure already played words are ignored.
-            if (mPlayedWords.find(validWordPathsEntry.first) == mPlayedWords.end()) {
-              if (filter == NULL || validWordPathsEntry.first.compare(filter) == 0) {
-		assert(false);
-		//                movesAsSet.insaert(WordBaseMove(validWordPathsEntry.second));
-              }
-            }
-          }
-        }
+	    const LegalWord& legalWord = mBoard->getLegalWord(legalWordId);
+            if (mPlayedWords.find(legalWord.mWord) == mPlayedWords.end()) {
+              if (filter == NULL || legalWord.mWord.compare(filter) == 0) {
+                moves.push_back(WordBaseMove(legalWord.mId));
+	      }
+	    }
+	  }
+	}
       }
     }
-    
-    // Turn this set back into a vector. Perhaps consider changing the protocol
-    // to return not a vector..
-    std::vector<WordBaseMove> moves(movesAsSet.size());
-    std::copy(movesAsSet.begin(), movesAsSet.end(), moves.begin());
-    
+
+    boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), rightshift(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
+
     return moves;
   }
-  
-  
+   
   char get_enemy(char player) const override {
     return (player == PLAYER_1) ? PLAYER_2 : PLAYER_1;
   }
@@ -405,7 +357,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     player_to_move = get_enemy(player_to_move);
   }
   
-  ostream &to_stream(ostream &os) const override {
+  std::ostream &to_stream(std::ostream &os) const override {
     return os;
   }
   
@@ -417,11 +369,11 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     return boost::hash_range(mState.begin(), mState.end());
   }
   
-  const std::unordered_set<string>& getAlreadyPlayed() const {
+  const std::unordered_set<std::string>& getAlreadyPlayed() const {
     return mPlayedWords;
   }
 
-  void addAlreadyPlayed(const string& alreadyPlayed) {
+  void addAlreadyPlayed(const std::string& alreadyPlayed) {
     mPlayedWords.insert(alreadyPlayed);
   }
 };

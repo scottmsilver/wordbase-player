@@ -18,35 +18,38 @@ struct LegalWord {
   LegalWordId mId;
   std::string mWord;
   CoordinateList mWordSequence;
-  int mHeuristicValue;
+  int mMaximizerGoodness;
+  int mMinimizerGoodness;
 };
 
 class LegalWordFactory {
   int mNextId;
-  std::unordered_map<int, LegalWord> mLegalWordMap;
+  //  std::unordered_map<int, LegalWord> mLegalWordMap;
+  std::vector<LegalWord> mLegalWordMap;
   std::unordered_map<CoordinateList, LegalWord> mCoordinateListMap;
 
  public:
   LegalWordFactory() : mNextId(0) { }
   
-  LegalWordId acquireWord(const CoordinateList& wordSequence, const std::string& word, int heuristicValue) {
+  LegalWordId acquireWord(const CoordinateList& wordSequence, const std::string& word, int maximizerGoodness, int minimizerGoodness) {
     // Make sure this can be inserted (as in it was not already inserted)
     if (mCoordinateListMap.find(wordSequence) != mCoordinateListMap.end()) {
       throw;
     }
 
-    LegalWord legalWord = {mNextId++, word, wordSequence, heuristicValue};
+    LegalWord legalWord = {mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness};
     // FIX-ME we're making copies of this LegalWord, perhaps consider shared_ptr or that other boost-y thing for dealing with a singel table.
-    mLegalWordMap.insert(std::pair<int, LegalWord>(legalWord.mId, legalWord));
+    mLegalWordMap.resize(legalWord.mId + 1);
+    mLegalWordMap[legalWord.mId] = legalWord;
+    //mLegalWordMap.insert(std::pair<int, LegalWord>(legalWord.mId, legalWord));
     mCoordinateListMap.insert(std::pair<CoordinateList, LegalWord>(wordSequence, legalWord));
 
     return legalWord.mId;
   }
   
   const LegalWord& getWord(LegalWordId id) const {
-    auto legalWordIterator = mLegalWordMap.find(id);
-    if (legalWordIterator != mLegalWordMap.end()) {
-      return legalWordIterator->second;
+    if (id < mNextId) {
+      return mLegalWordMap[id];
     } else {
       throw;
     }
@@ -169,6 +172,26 @@ class BoardStatic {
   const CoordinateList& getMegabombs() const { return mMegabombs; }
 
  private:
+  int maximizerGoodness(const CoordinateList& wordSequence) const {
+    int maximizerGoodness = 0;
+    for (auto x : wordSequence) {
+      maximizerGoodness += (x.first + 1) * (x.first + 1);
+    }
+
+    return maximizerGoodness;
+  }
+
+  int minimizerGoodness(const CoordinateList& moveSequence) const {
+    int minimizerGoodness = 0;
+
+    for (auto x : moveSequence) {
+      minimizerGoodness += (x.first - kBoardHeight) * (x.first - kBoardHeight);
+    }
+
+    return minimizerGoodness;
+  }
+
+    
   // Adds all valid words from given grid square to a map.
   void findWordPaths(int y, int x, std::string prefix, CoordinateList prefixPath,
                      std::vector<std::pair<std::string, CoordinateList>>& validWordPaths, LegalWordList& wordList) {
@@ -197,7 +220,7 @@ class BoardStatic {
     // Keep track of our word as (word, path) if it's a real word.
     if (mDictionary.hasWord(prefix)) {
       validWordPaths.push_back(std::pair<std::string, CoordinateList>(prefix, prefixPath));
-      int legalWordId = mLegalWordFactory.acquireWord(prefixPath, prefix, 100);
+      int legalWordId = mLegalWordFactory.acquireWord(prefixPath, prefix, maximizerGoodness(prefixPath), minimizerGoodness(prefixPath));
       wordList.push_back(legalWordId);
     }
     

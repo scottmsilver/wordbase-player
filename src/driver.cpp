@@ -17,9 +17,7 @@
 */
 
 #include <algorithm>
-#include <boost/iterator/filter_iterator.hpp>
-#include <boost/range/adaptors.hpp>
-#include <boost/range/algorithm.hpp>
+
 #include <editline/readline.h>
 #include <memory>
 #include <iostream>
@@ -71,7 +69,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       int x = std::stoi(tokens[2], nullptr, 0);
       
       for (auto wordPaths : gBoard->findValidWordPaths(y, x)) {
-        cout << wordPaths.first << ": " << wordPaths.second << endl;
+	std::cout << wordPaths.first << ": " << wordPaths.second << std::endl;
       }
     } else if (tokens[0].compare("lm") == 0) {
       // Determine all legal moves for current state of board.
@@ -79,7 +77,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //   lm
       for (auto move : gState->get_legal_moves()) {
-        cout << gBoard->getLegalWord(move.mLegalWordId).mWord << ":" << move << endl;
+        std::cout << gBoard->getLegalWord(move.mLegalWordId).mWord << ":" << move << std::endl;
       }
     } else if (tokens[0].compare("l") == 0) {
       // Load commands from file and execute them.
@@ -87,7 +85,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //  l /foo/goo/roo.txt
       if (tokens.size() != 2) {
-        cout << "file name required: l /foo/goo/roo" << endl;
+        std::cout << "file name required: l /foo/goo/roo" << std::endl;
       } else {
         std::ifstream input(tokens[1]);
         for (std::string line; getline(input, line);) {
@@ -103,12 +101,12 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
         WordBaseState copy(*gState);
         copy.make_move(move);
 	const LegalWord& legalWord = gBoard->getLegalWord(move.mLegalWordId);
-	cout << legalWord.mWord << ": " << legalWord.mWordSequence <<  ": h=" << copy.get_goodness() << endl;
+	std::cout << legalWord.mWord << ": " << legalWord.mWordSequence <<  ": h=" << copy.get_goodness() << std::endl;
       }
     } else if (tokens[0].compare("ap") == 0) {
       // Print out already played for given player
       for (auto word : gState->getAlreadyPlayed()) {
-        cout << word << endl;
+        std::cout << word << std::endl;
       }
     } else if (tokens[0].compare("bombs") == 0) {
       // Add bombs to the board.
@@ -116,7 +114,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage
       //  bombs (3,3),(1,2)
       CoordinateList sequence(CoordinateList::parsePath(tokens[1]));
-      cout << "putting bombs at: " << sequence << endl;
+      std::cout << "putting bombs at: " << sequence << std::endl;
       gState->putBomb(sequence, false);
     } else if (tokens[0].compare("mbombs") == 0) {
       // Add megabombs to the board.
@@ -124,7 +122,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage
       //  mbombs (3,3),(1,2)
       CoordinateList sequence(CoordinateList::parsePath(tokens[1]));
-      cout << "putting bombs at: " << sequence << endl;
+      std::cout << "putting bombs at: " << sequence << std::endl;
       gState->putBomb(sequence, true);
     } else if (tokens[0].compare("nb") == 0) {
       // New board. Pre-pending the letter with a "*" puts a bomb at that spot, a + is a "megabomb"
@@ -158,10 +156,10 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       miniMax.setUseTranspositionTable(useTranspositionTable);
       WordBaseMove move = miniMax.get_move(gState.get());
       const LegalWord& legalWord = gBoard->getLegalWord(move.mLegalWordId);
-      cout << "suggested move: " << legalWord.mWord << ":" << legalWord.mWordSequence << endl << move << endl;
+      std::cout << "suggested move: " << legalWord.mWord << ":" << legalWord.mWordSequence << std::endl << move << std::endl;
       WordBaseState state(*gState);
       state.make_move(move);
-      cout << state << endl;
+      std::cout << state << std::endl;
     } else if (tokens[0].compare("smmc") == 0) {
       // Use a montecarlo search tree method to suggest a move
       //
@@ -175,16 +173,16 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       MonteCarloTreeSearch<WordBaseState, WordBaseMove> montecarlo(maxSeconds);
 
       WordBaseMove move = montecarlo.get_move(gState.get());
-      cout << "suggested move: " << gBoard->getLegalWord(move.mLegalWordId).mWord << endl << move << endl;
+      std::cout << "suggested move: " << gBoard->getLegalWord(move.mLegalWordId).mWord << std::endl << move << std::endl;
       WordBaseState state(*gState);
       state.make_move(move);
-      cout << state << endl;
+      std::cout << state << std::endl;
     } else if (tokens[0].compare("h") == 0) {
       // Return the current h() / "goodness" of the current game.
       //
       // Usage:
       //  h
-      cout << "h: " << gState->get_goodness() << endl;
+      std::cout << "h: " << gState->get_goodness() << std::endl;
     } else if (tokens[0].compare("ps") == 0) {
       // Print out the state of the current game.
       std::cout << *gState;
@@ -195,7 +193,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //  add-ap foo goo roo
       for (auto it = std::next(tokens.begin()); it != tokens.end(); ++it) {
         gState->addAlreadyPlayed(*it);
-	cout << "Added already played: " << *it << endl;
+	std::cout << "Added already played: " << *it << std::endl;
       }
     } else if (tokens[0].compare("m") == 0) {
       // Make move. NB: Does not currently check if the move is legal.
@@ -205,10 +203,10 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       if (tokens.size() > 1) {
 	const LegalWord& legalWord = gBoard->getLegalWord(CoordinateList::parsePath(tokens[1]));
 	WordBaseMove move(legalWord.mId);
-        cout << "making move: \"" << gBoard->wordFromMove(legalWord.mWordSequence) << "\": " << move << std::endl;
+        std::cout << "making move: \"" << gBoard->wordFromMove(legalWord.mWordSequence) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {
-        cout << "argument required: m (1,2),(2,3)" << endl;
+        std::cout << "argument required: m (1,2),(2,3)" << std::endl;
       }
     } else if (tokens[0].compare("quit") == 0) {
       // Quit the game.
@@ -217,7 +215,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //  quit
       notQuit = false;
     } else {
-      cout << "unknown command" << std::endl;
+      std::cout << "unknown command" << std::endl;
     }
   }
   
@@ -229,11 +227,11 @@ int main(int argc, char** argv) {
 
   // Determine dictionary file to use and print out exception if not found.
   const char* dictionaryPath = argc > 1 ? argv[1] : kDefaultDictionaryPath;
-  cout << "Using dictionary at '" << dictionaryPath << "'" << endl;
+  std::cout << "Using dictionary at '" << dictionaryPath << "'" << std::endl;
 
   std::ifstream input(dictionaryPath);
   if (!input.is_open()) {
-    throw std::runtime_error("Could not open dictionary file: \"" + string(dictionaryPath) + "\"");
+    throw std::runtime_error("Could not open dictionary file: \"" + std::string(dictionaryPath) + "\"");
   }
 
   input.exceptions(std::ifstream::badbit);

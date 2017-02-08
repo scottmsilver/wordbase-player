@@ -10,14 +10,14 @@ struct WordBaseMove : public Move<WordBaseMove> {
   
   void read() override {
     assert(false);
-        cout << "Enter form of (Y, X),?+" << endl;
+        std::cout << "Enter form of (Y, X),?+" << std::endl;
     
     std::string line;
     std::getline(std::cin, line);
     //mMove = CoordinateList::parsePath(line);
   }
   
-  ostream &to_stream(ostream &os) const override {
+  std::ostream &to_stream(std::ostream &os) const override {
     os << "lw(" << mLegalWordId << ")";
     /*
     bool first = true;

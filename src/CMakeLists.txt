@@ -37,6 +37,11 @@ target_link_libraries(perf-test)
 set_property(TARGET perf-test PROPERTY CXX_STANDARD 11)
 set_property(TARGET perf-test PROPERTY CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-namespace test-namespace.cpp)
+target_link_libraries(test-namespace)
+set_property(TARGET test-namespace PROPERTY CXX_STANDARD 11)
+set_property(TARGET test-namespace PROPERTY CXX_STANDARD_REQUIRED ON)
+
 project(WordBase CXX)
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
 

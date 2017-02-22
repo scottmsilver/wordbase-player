@@ -1,7 +1,16 @@
 # wordbase-player
 Plays the game of wordbase.
 
-To build:
+This tries to be a relatively fast game solver for wordbase. I've tried to optimize the playing of the game to get through the game tree pretty quickly. I try to use or move as little memory as possible when evaluating game states. Right now the big win would come from more pruning by picking better moves - essentially a better heurstic for what moves to consider. Also, I could be doing the actually picking and then sorting of the moves better two. Since this games a pretty high branching factor, the time is dominated by sorting the moves to consider by the heuristic value of each of the possible moves.
+
+The game also doesn't do a great job picking a "best" move when there is no way to win. Since most players real human players won't find the winning moves, this is somethign I should fix.
+
+On most games if I give it 45 seconds in the release build on a MacBook Pro from a couple of years ago I can get to depth 5.
+
+PS: I borrowed Adam's alpha-beta pruning implementation. Thanks Adam!
+PPS: The driver itself has lots more features, which I haven't documented.
+
+To build as a debug version (use -DCMAKE_BUILD_TYPE=Release on the cmake command line to build Release)
 
 ```
 # Move to directory containing "src"
@@ -20,7 +29,16 @@ Create a new board. The preceding *, means a bomb at the letter after the *. A +
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves
 nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves
 ```
-Print the state of the board.
+Print the state of the board. Each grid sqaure contains two pieces of information.
+
+The first is either ".", "*", "+" or empty.
+
+"." means owned
+"*" or "+" means there's a bomb there (and it won't be owned)
+empty means it's un owned.
+
+The second is the letter. If it's upper-case, it's owned by player 1, the player moving from the top. If it's lower-case AND there's a "." next to it, it's owned by player 2, the player moving from the bottom.
+
 ```
 boardshell> ps
 ps

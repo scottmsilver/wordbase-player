@@ -23,6 +23,7 @@ class WordDictionary {
     std::string line;
     while (getline(dictionaryStream, line)) {
       std::string word(rtrim(line));
+
       mWords.insert(word);
       // Keep track of all possible prefixes of this word, starting at word length 2.
       for (int wordLength = 1; wordLength <= word.length(); wordLength++) {
@@ -37,6 +38,8 @@ class WordDictionary {
   // Return true if prefix is a prefix of a word in the dictionary.
   // NB: prefix only returns true for words of length >= 2.
   bool hasPrefix(const std::string& prefix) const { return mPrefixes.find(prefix) != mPrefixes.end(); }
+
+  std::vector<std::string> getWords() const { return std::vector<std::string>(mWords.cbegin(), mWords.cend()); }
 };
 
 #endif

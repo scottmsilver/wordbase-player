@@ -26,9 +26,8 @@ typedef std::vector<int> LegalWordList;
 
 class LegalWordFactory {
   int mNextId;
-  //  std::unordered_map<int, LegalWord> mLegalWordMap;
-  std::vector<LegalWord> mLegalWordMap;
-  std::unordered_map<CoordinateList, LegalWord> mCoordinateListMap;
+  std::vector<std::shared_ptr<LegalWord>> mLegalWordMap;
+  std::unordered_map<CoordinateList, std::shared_ptr<LegalWord>> mCoordinateListMap;
   std::multimap<std::string, LegalWordId> mWordToLegalWordIds;
     
  public:
@@ -40,20 +39,19 @@ class LegalWordFactory {
       throw;
     }
 
-    LegalWord legalWord = {mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness};
+    std::shared_ptr<LegalWord> legalWord(new LegalWord({mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness}));
 
-    // FIX-ME we're making copies of this LegalWord, perhaps consider shared_ptr or that other boost-y thing for dealing with a singel table.
-    mLegalWordMap.resize(legalWord.mId + 1);
-    mLegalWordMap[legalWord.mId] = legalWord;
-    mCoordinateListMap.insert(std::pair<CoordinateList, LegalWord>(wordSequence, legalWord));
-    mWordToLegalWordIds.insert(std::pair<std::string, LegalWordId>(word, legalWord.mId));
-			       
-    return legalWord.mId;
+    mLegalWordMap.resize(legalWord->mId + 1);
+    mLegalWordMap[legalWord->mId] = legalWord;
+    mCoordinateListMap.insert(std::pair<CoordinateList, std::shared_ptr<LegalWord>>(wordSequence, legalWord));
+    mWordToLegalWordIds.insert(std::pair<std::string, LegalWordId>(word, legalWord->mId));
+    
+    return legalWord->mId;
   }
   
   const LegalWord& getWord(LegalWordId id) const {
     if (id < mNextId) {
-      return mLegalWordMap[id];
+      return *mLegalWordMap[id];
     } else {
       throw;
     }
@@ -68,12 +66,51 @@ class LegalWordFactory {
   const LegalWord& getWord(const CoordinateList& coordinateList) const {
     auto legalWordIterator = mCoordinateListMap.find(coordinateList);
     if (legalWordIterator != mCoordinateListMap.end()) {
-      return legalWordIterator->second;
+      return *legalWordIterator->second;
     } else {
       throw;
     }
   }
 
+  struct Goodness2 {
+    bool mIsMaximizer;
+    
+    Goodness2(bool isMaximizer) : mIsMaximizer(isMaximizer) { }
+    
+    bool operator()(const std::shared_ptr<LegalWord>& i, const std::shared_ptr<LegalWord>& j) const {
+      return heuristicValue(i) > heuristicValue(j);
+    }
+    
+    int heuristicValue(const std::shared_ptr<LegalWord>& x) const {
+      return (mIsMaximizer) ? x->mMaximizerGoodness : x->mMinimizerGoodness;
+    }
+    
+    // Used in conjunction with spreadsort. Right shift the value
+    inline int operator()(const std::shared_ptr<LegalWord>& x, unsigned offset) const {
+      return heuristicValue(x) >> offset;
+    }
+  };
+  
+  void renumberByGoodness() {
+    // Make a copy.
+    std::vector<std::shared_ptr<LegalWord>> legalWordsCopy(mLegalWordMap);
+    
+    // Sort by heuristic.
+    std::sort(legalWordsCopy.begin(), legalWordsCopy.end(), Goodness2(false));
+    
+    // Renumber.
+    int number = 0;
+    for (auto legalWord : legalWordsCopy) {
+      legalWord->mMinimizerGoodness = number++;
+    }
+
+    std::sort(legalWordsCopy.begin(), legalWordsCopy.end(), Goodness2(true));
+    number = 0;
+    for (auto legalWord : legalWordsCopy) {
+      legalWord->mMaximizerGoodness = number++;
+    }
+  }
+  
   int getSize() const { return mNextId; }
 };
 
@@ -128,6 +165,7 @@ class BoardStatic {
     }
 
     findLegalWordsForGrid();
+    //mLegalWordFactory.renumberByGoodness();
   }
 
   const LegalWord& getLegalWord(int id) const {
@@ -226,8 +264,8 @@ class BoardStatic {
       return;
     }
     
-    // If there exist no words > len(2) starting with this cut off the search.
-    if (prefixPath.size() > 2 && !mDictionary.hasPrefix(prefix)) {
+    // If there exist no words > word is of length 2 or more.
+    if (prefixPath.size() >= 2 && !mDictionary.hasPrefix(prefix)) {
       return;
     }
     

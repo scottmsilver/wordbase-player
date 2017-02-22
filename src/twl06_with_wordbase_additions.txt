@@ -89032,6 +89032,7 @@ loin
 loincloth
 loincloths
 loins
+loir
 loiter
 loitered
 loiterer

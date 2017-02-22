@@ -14,10 +14,14 @@
  
  You should have received a copy of the GNU General Public License
  along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
+
+#include <boost/config/warning_disable.hpp>
+#include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix_core.hpp>
+#include <boost/spirit/include/phoenix_operator.hpp>
 
 #include <algorithm>
-
 #include <editline/readline.h>
 #include <memory>
 #include <iostream>
@@ -28,6 +32,7 @@
 #include <vector>
 
 #include "easylogging++.h"
+#include "wordbaseapp-db.h"
 #include "wordescape.cpp"
 
 INITIALIZE_EASYLOGGINGPP
@@ -44,11 +49,69 @@ std::unique_ptr<BoardStatic> gBoard;
 // The state of the board.
 std::unique_ptr<WordBaseState> gState;
 
+// The wordbase app db we are currently operating on
+std::unique_ptr<WordbaseAppDb> gWordbaseAppDb;
+
+// Not used, some vestigial thinkng on a real parser...
+namespace client
+{
+  template <typename Iterator>
+  bool parse_complex(Iterator first, Iterator last, std::complex<double>& c)
+  {
+    using boost::spirit::qi::double_;
+    using boost::spirit::qi::_1;
+    using boost::spirit::qi::phrase_parse;
+    using boost::spirit::ascii::space;
+    using boost::phoenix::ref;
+    
+    double rN = 0.0;
+    double iN = 0.0;
+    bool r = phrase_parse(first, last,
+                          //  Begin grammar
+                          (
+                           '(' >> double_[ref(rN) = _1]
+                           >> -(',' >> double_[ref(iN) = _1]) >> ')'
+                           |   double_[ref(rN) = _1]
+                           ),
+                          //  End grammar
+                          
+                          space);
+    
+    if (!r || first != last) // fail if we did not get a full match
+      return false;
+    c = std::complex<double>(rN, iN);
+    return r;
+  }
+}
+
+// Represents the set differences between two dictionaries.
+// in Board but not in Global are words that WordBase has that our dictionary does not and should be added
+struct Differences {
+  std::vector<std::string> mInGlobalButNotBoard;
+  std::vector<std::string> mInBoardButNotGlobal;
+  std::vector<std::string> mInBoth;
+};
+
+// Calculate the differences between what the global dictionary has and what the board dictionary has.
+Differences calculateDifferences(const WordDictionary& globalDictionary, const std::vector<std::string>& boardWords) {
+  std::vector<std::string> dictionaryWordsSorted = globalDictionary.getWords();
+  std::sort(dictionaryWordsSorted.begin(), dictionaryWordsSorted.end());
+  std::vector<std::string> boardWordsSorted(boardWords);
+  std::sort(boardWordsSorted.begin(), boardWordsSorted.end());
+  
+  Differences differences;
+  
+  std::set_intersection(dictionaryWordsSorted.begin(), dictionaryWordsSorted.end(), boardWordsSorted.begin(), boardWordsSorted.end(), std::inserter(differences.mInBoth, differences.mInBoth.begin()));
+  std::set_difference(dictionaryWordsSorted.begin(), dictionaryWordsSorted.end(), differences.mInBoth.begin(), differences.mInBoth.end(), std::inserter(differences.mInGlobalButNotBoard, differences.mInGlobalButNotBoard.begin()));
+  std::set_difference(boardWordsSorted.begin(), boardWordsSorted.end(), differences.mInBoth.begin(), differences.mInBoth.end(), std::inserter(differences.mInBoardButNotGlobal, differences.mInBoardButNotGlobal.begin()));
+  
+  return differences;
+}
 
 // Do a single command from our command parser.
 static bool doOneCommand(const char* dictionaryPath, const std::string& command) {
-  bool notQuit = true;  
-
+  bool notQuit = true;
+  
   // Break up command string into space delimited tokens.
   std::vector<std::string> tokens;
   std::istringstream iss(command);
@@ -69,7 +132,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       int x = std::stoi(tokens[2], nullptr, 0);
       
       for (auto wordPaths : gBoard->findValidWordPaths(y, x)) {
-	std::cout << wordPaths.first << ": " << wordPaths.second << std::endl;
+        std::cout << wordPaths.first << ": " << wordPaths.second << std::endl;
       }
     } else if (tokens[0].compare("lm") == 0) {
       // Determine all legal moves for current state of board.
@@ -100,8 +163,8 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       for (auto move : gState->get_legal_moves(INF, tokens[1].c_str())) {
         WordBaseState copy(*gState);
         copy.make_move(move);
-	const LegalWord& legalWord = gBoard->getLegalWord(move.mLegalWordId);
-	std::cout << legalWord.mWord << ": " << legalWord.mWordSequence <<  ": h=" << copy.get_goodness() << std::endl;
+        const LegalWord& legalWord = gBoard->getLegalWord(move.mLegalWordId);
+        std::cout << legalWord.mWord << ": " << legalWord.mWordSequence <<  ": h=" << copy.get_goodness() << std::endl;
       }
     } else if (tokens[0].compare("ap") == 0) {
       // Print out already played for given player
@@ -151,7 +214,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       if (tokens.size() > 3) {
         useTranspositionTable = tokens[3].compare("true") == 0;
       }
-
+      
       Minimax<WordBaseState, WordBaseMove> miniMax(maxSeconds, maxDepth);
       miniMax.setUseTranspositionTable(useTranspositionTable);
       WordBaseMove move = miniMax.get_move(gState.get());
@@ -169,9 +232,9 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       if (tokens.size() > 1) {
         maxSeconds = std::stod(tokens[1], nullptr);
       }
-
+      
       MonteCarloTreeSearch<WordBaseState, WordBaseMove> montecarlo(maxSeconds);
-
+      
       WordBaseMove move = montecarlo.get_move(gState.get());
       std::cout << "suggested move: " << gBoard->getLegalWord(move.mLegalWordId).mWord << std::endl << move << std::endl;
       WordBaseState state(*gState);
@@ -193,7 +256,7 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       //  add-ap foo goo roo
       for (auto it = std::next(tokens.begin()); it != tokens.end(); ++it) {
         gState->addAlreadyPlayed(*it);
-	std::cout << "Added already played: " << *it << std::endl;
+        std::cout << "Added already played: " << *it << std::endl;
       }
     } else if (tokens[0].compare("m") == 0) {
       // Make move. NB: Does not currently check if the move is legal.
@@ -201,12 +264,34 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
       // Usage:
       //  m (0,1),(1,2)
       if (tokens.size() > 1) {
-	const LegalWord& legalWord = gBoard->getLegalWord(CoordinateList::parsePath(tokens[1]));
-	WordBaseMove move(legalWord.mId);
+        const LegalWord& legalWord = gBoard->getLegalWord(CoordinateList::parsePath(tokens[1]));
+        WordBaseMove move(legalWord.mId);
         std::cout << "making move: \"" << gBoard->wordFromMove(legalWord.mWordSequence) << "\": " << move << std::endl;
         gState->make_move(move);
       } else {
         std::cout << "argument required: m (1,2),(2,3)" << std::endl;
+      }
+    } else if (tokens[0].compare("load-wbdb") == 0) {
+      // load-wbdb - Load an encrypted wordbase db.
+      if (tokens.size() > 1) {
+        gWordbaseAppDb.reset(new WordbaseAppDb(tokens[1]));
+      } else {
+        std::cout << "usage: lwdb /path/to/encrypted.db" << std::endl;
+      }
+    } else if (tokens[0].compare("ls-wbdb") == 0) {
+      // FIX-ME check null.
+      int i = 0;
+      for (auto board : gWordbaseAppDb->getBoards()) {
+        std::cout << "[" << i << "] " << board << std::endl;
+        i++;
+      }
+    } else if (tokens[0].compare("comp-wbdb") == 0) {
+      // wdb-comp: compare the dictionary of the board specified to
+      // our default dictionary.
+      if (tokens.size() > 1) {
+        int boardIndex = std::stod(tokens[1], nullptr);
+        Differences differences = calculateDifferences(*gDictionary, gWordbaseAppDb->getBoards()[boardIndex].extractWords());
+        std::cout << differences.mInBoardButNotGlobal.size() << std::endl;
       }
     } else if (tokens[0].compare("quit") == 0) {
       // Quit the game.
@@ -224,23 +309,23 @@ static bool doOneCommand(const char* dictionaryPath, const std::string& command)
 
 int main(int argc, char** argv) {
   START_EASYLOGGINGPP(argc, argv);
-
+  
   // Determine dictionary file to use and print out exception if not found.
   const char* dictionaryPath = argc > 1 ? argv[1] : kDefaultDictionaryPath;
   std::cout << "Using dictionary at '" << dictionaryPath << "'" << std::endl;
-
+  
   std::ifstream input(dictionaryPath);
   if (!input.is_open()) {
     throw std::runtime_error("Could not open dictionary file: \"" + std::string(dictionaryPath) + "\"");
   }
-
+  
   input.exceptions(std::ifstream::badbit);
   gDictionary.reset(new WordDictionary(input));
   
   // Configure readline to auto-complete paths when the tab key is hit.
   rl_bind_key('\t', rl_complete);
   bool notQuit = true;
-
+  
   while (notQuit) {
     std::unique_ptr<char, decltype(free) *> input {readline("boardshell> "), free};
     

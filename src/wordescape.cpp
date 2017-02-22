@@ -59,29 +59,29 @@ public:
 
 // Functor to help compare two moves on the basis of their heuristic score.
 struct Goodness {
-  char mPlayerToMove;
   const BoardStatic& mBoard;
+  char mPlayerToMove;
   
   Goodness(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
   
   bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
-    return mPlayerToMove == PLAYER_1 ? goodnessSorterMax(i, j) : goodnessSorterMin(i, j);
-  }
-  
-  bool goodnessSorterMin(const WordBaseMove& i, const WordBaseMove& j) const {
-    return mBoard.getLegalWord(i.mLegalWordId).mMinimizerGoodness > mBoard.getLegalWord(j.mLegalWordId).mMinimizerGoodness;
+    return heuristicValue(i) > heuristicValue(j);
   }
 
-  bool goodnessSorterMax(const WordBaseMove& i, const WordBaseMove& j) const {
-    return mBoard.getLegalWord(i.mLegalWordId).mMaximizerGoodness > mBoard.getLegalWord(j.mLegalWordId).mMaximizerGoodness; 
+  int heuristicValue(const WordBaseMove& x) const {
+    return (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mMinimizerGoodness;
+  }
+  
+  // Used in conjunction with spreadsort. Right shift the value 
+  inline int operator()(const WordBaseMove & x, unsigned offset) const {
+    return heuristicValue(x) >> offset;
   }
 };
 
-
 // State of Wordbase game.
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
-  WordBaseGridState mState;
   BoardStatic* mBoard;
+  WordBaseGridState mState;
   std::vector<bool> mPlayedWords;
   
   WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board), mPlayedWords(mBoard->getLegalWordsSize(), false) {
@@ -113,7 +113,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     int h = 0;
     
     // First look for the terminal conditions.
-    // FIX-ME combine this with is_terminal, with one that can say which player was terminal.ps
+    // FIX-ME combine this with is_terminal, with one that can say which player was terminal.
     for (int x = 0; x < kBoardWidth; x++) {
       if (mState.get(0, x) == PLAYER_2) {
         h = -INF;
@@ -152,21 +152,6 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     return get_legal_moves(max_moves, NULL);
   }
 
-  // Right shift the sorted value in WordBaseMove (the correct heuristic value)
-  // for use with spreadsort.
-  struct rightshift {
-    char mPlayerToMove;
-    const BoardStatic& mBoard;
-    
-    rightshift(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
-
-    inline int operator()(const WordBaseMove & x, unsigned offset) {
-      int heuristicValue = (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mMinimizerGoodness;
-      
-      return heuristicValue >> offset;
-    }
-  };
-  
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
   // filter must exactly match the found move, keeping in mind that the same
@@ -195,7 +180,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       }
     }
 
-    boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), rightshift(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
+    boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), Goodness(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
 
     return moves;
   }

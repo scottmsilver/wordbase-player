@@ -14,9 +14,10 @@
  
  You should have received a copy of the GNU General Public License
  along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include <algorithm>
+#include <boost/dynamic_bitset.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
 #include <cstddef>
 #include <fstream>
@@ -29,6 +30,7 @@
 #include "board.h"
 #include "grid.h"
 #include "gtsa.hpp"
+#include "obstack/obstack.hpp"
 #include "string-util.h"
 #include "wordbase-move.h"
 
@@ -42,6 +44,11 @@ const char kOwnerUnowned = 0;
 const char kOwnerMaximizer = 1;
 const char kOwnerMinimizer = 2;
 
+boost::arena::obstack gObstack(1024*1024*1024);
+
+// The storage representation of state of a Wordbase game; essentially a grid
+// the correct size and initialized to Player 1 owns first row and Player 2 owns
+// second row.
 class WordBaseGridState : public Grid<char, kBoardHeight, kBoardWidth> {
 public:
   // Initialize GridState by copying the underlying contents.
@@ -57,26 +64,53 @@ public:
   }
 };
 
-// Functor to help compare two moves on the basis of their heuristic score.
+// Functor to help compare two moves on the basis of their heuristic score (aka Goodness)
 struct Goodness {
   const BoardStatic& mBoard;
   char mPlayerToMove;
   
   Goodness(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
   
+  // Return true if the i is a better more than j.
   bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
+    // FIX-ME this is suspect. Why does > give better values than <
     return heuristicValue(i) > heuristicValue(j);
   }
-
+  
+  // Return the heuristic value (aka Goodness) of this move.
   int heuristicValue(const WordBaseMove& x) const {
     return (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mMinimizerGoodness;
   }
   
-  // Used in conjunction with spreadsort. Right shift the value 
+  // Used in conjunction with spreadsort. Right shift the value. See spreadshort for documentation.
   inline int operator()(const WordBaseMove & x, unsigned offset) const {
     return heuristicValue(x) >> offset;
   }
 };
+
+// Functor to help compare two moves on the basis of their heuristic score (aka Goodness)
+struct Goodness2 {
+  const BoardStatic& mBoard;
+  char mPlayerToMove;
+  
+  Goodness2(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
+  
+  // Return true if the i is a better more than j.
+  bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
+    return heuristicValue(i) < heuristicValue(j);
+  }
+  
+  // Return the heuristic value (aka Goodness) of this move.
+  int heuristicValue(const WordBaseMove& x) const {
+    return (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mRenumberedMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mRenumberedMinimizerGoodness;
+  }
+  
+  // Used in conjunction with spreadsort. Right shift the value. See spreadshort for documentation.
+  inline int operator()(const WordBaseMove & x, unsigned offset) const {
+    return heuristicValue(x) >> offset;
+  }
+};
+
 
 // State of Wordbase game.
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
@@ -88,12 +122,12 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
   }
-
-  // Copy state from an old state.
+  
+  // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
-    State<WordBaseState, WordBaseMove>(rhs.player_to_move),
-    mBoard(rhs.mBoard),
-    mState(rhs.mState), mPlayedWords(rhs.mPlayedWords) {
+  State<WordBaseState, WordBaseMove>(rhs.player_to_move),
+  mBoard(rhs.mBoard),
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords) {
   }
   
   WordBaseState clone() const override {
@@ -145,13 +179,13 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     
     return h * color;
   }
-
+  
   // Return all the legal moves from this current state, only consider a maximum
   // of max_moves moves.
   std::vector<WordBaseMove> get_legal_moves(int max_moves = INF) const override {
-    return get_legal_moves(max_moves, NULL);
+    return get_legal_moves2(max_moves, NULL);
   }
-
+  
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
   // filter must exactly match the found move, keeping in mind that the same
@@ -167,24 +201,66 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         if (mState.get(y, x) == player_to_move) {
-	  auto legalWords = mBoard->getLegalWords(y, x);
+          auto legalWords = mBoard->getLegalWords(y, x);
           for (auto&& legalWordId : legalWords) {
-	    // Ensure already played words are ignored.
+            // Ensure already played words are ignored.
             if (!mPlayedWords[legalWordId]) {
               if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
                 moves.push_back(WordBaseMove(legalWordId));
-	      }
-	    }
-	  }
-	}
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Sort moves in order of Goodness. NB: This is probably the slowest part in traversing to the next
+    // ply. So we have tried to heavily optimize this sort.
+    boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), Goodness(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
+    
+    return moves;
+  }
+  
+  // Return a list of legal moves filtered by an optional filter and sorted
+  // by most likely to be the "best" move.
+  // filter must exactly match the found move, keeping in mind that the same
+  // word may appear through multiple paths.
+  // Also note that words which are already played are excluded.
+  std::vector<WordBaseMove> get_legal_moves2(int max_moves, const char* filter) const {
+    // Initialize all the valid words to zero.
+    boost::dynamic_bitset<> validWordBits(mBoard->getLegalWordsSize());
+
+    // For each letter owned by the current player find candidate words OR them all together
+    // They are implicitly in "order" so this effectively sorts them too.
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        if (mState.get(y, x) == player_to_move) {
+          auto legalWords = mBoard->getLegalWords(y, x);
+          validWordBits |= legalWords.wordBits(this->player_to_move == PLAYER_1);
+        }
       }
     }
 
-    boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), Goodness(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
+    std::vector<WordBaseMove> moves(validWordBits.count());
 
+    int moveIndex = 0;
+    // Iterate from set bit to set bit, each representing a legal word in our set.
+    for (int renumberedGoodness = validWordBits.find_next(0); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
+      LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
+
+      // Ensure already played words are ignored.
+      if (!mPlayedWords[legalWordId]) {
+        if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
+          moves[moveIndex].mLegalWordId = legalWordId;
+          moveIndex++;
+        }
+      }
+    }
+    
+    moves.resize(moveIndex);
     return moves;
   }
-   
+
   char get_enemy(char player) const override {
     return (player == PLAYER_1) ? PLAYER_2 : PLAYER_1;
   }
@@ -249,7 +325,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       recordOne(y + 1, x - 1);
     }
   }
-
+  
   // Record a single move in the game. Iterates through each grid square, claiming that square.
   void recordMove(const WordBaseMove& move) {
     // The first letter of the word must be owend by the current player.
@@ -257,16 +333,16 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     if (wordSequence.size() > 0) {
       assert(mState.get(wordSequence[0].first, wordSequence[0].second) == player_to_move);
     }
-
+    
     // Record each letter.
     for (const auto& pathElement : wordSequence) {
       recordOne(pathElement.first, pathElement.second);
     }
-
+    
     // Mark this word as played.
     std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(mBoard->getLegalWordIds(mBoard->getLegalWord(move.mLegalWordId).mWord));
     for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
-      mPlayedWords[i->second] = true;      
+      mPlayedWords[i->second] = true;
     }
   }
   
@@ -275,7 +351,9 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // any path and has the same owner as (y, x).
   // Mark it by setting the the the high bit.
   //
-  // This should be followed by a called to clearNotConnected().
+  // This must be followed by a call to clearNotConnected().
+  // FIX-ME(ssilver): We should probably change the protocol here so that it is not
+  // possible to mark without clearing.
   void markConnected(int y, int x, char owner) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
@@ -348,20 +426,22 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   
   const std::vector<std::string> getAlreadyPlayed() const {
     std::vector<std::string> alreadyPlayed;
-
+    
     for (int curId = 0; curId < mPlayedWords.size(); curId++) {
       if (mPlayedWords[curId]) {
-	alreadyPlayed.push_back(mBoard->getLegalWord(curId).mWord);
+        alreadyPlayed.push_back(mBoard->getLegalWord(curId).mWord);
       }
     }
-
+    
     return alreadyPlayed;
   }
-
+  
+  // Add words to the already played this; this is used for testing
+  // or for joining games already in progress.
   void addAlreadyPlayed(const std::string& alreadyPlayed) {
     for (int curId = 0; curId < mPlayedWords.size(); curId++) {
       if (mBoard->getLegalWord(curId).mWord.compare(alreadyPlayed) == 0) {
-	mPlayedWords[curId] = true;
+        mPlayedWords[curId] = true;
       }
     }
   }

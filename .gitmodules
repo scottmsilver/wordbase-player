@@ -1,0 +1,3 @@
+[submodule "src/obstack"]
+	path = src/obstack
+	url = https://github.com/cleeus/obstack

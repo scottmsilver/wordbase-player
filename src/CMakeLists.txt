@@ -26,6 +26,9 @@ if (CMAKE_VERSION VERSION_LESS 2.8.11)
                       "${gmock_SOURCE_DIR}/include")
 endif()
 
+
+
+
 # First test
 add_executable(example example.cpp)
 target_link_libraries(example gtest_main)
@@ -34,8 +37,9 @@ set_property(TARGET example PROPERTY CXX_STANDARD 11)
 set_property(TARGET example PROPERTY CXX_STANDARD_REQUIRED ON)
 
 # First test
-add_executable(perf-test perf-test.cpp)
+add_executable(perf-test perf-test.cpp obstack/obstack.cpp)
 target_link_libraries(perf-test)
+target_include_directories(perf-test PUBLIC obstack)
 set_property(TARGET perf-test PROPERTY CXX_STANDARD 11)
 set_property(TARGET perf-test PROPERTY CXX_STANDARD_REQUIRED ON)
 
@@ -54,15 +58,18 @@ set_property(TARGET test-namespace PROPERTY CXX_STANDARD_REQUIRED ON)
 project(WordBase CXX)
 cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
 
-add_executable(wordbase-driver driver.cpp)
+add_executable(wordbase-driver driver.cpp obstack/obstack.cpp)
 set_property(TARGET wordbase-driver PROPERTY CXX_STANDARD 11)
 set_property(TARGET wordbase-driver PROPERTY CXX_STANDARD_REQUIRED ON)
 target_link_libraries(wordbase-driver readline)
 
 FIND_PACKAGE(Boost)
+find_package(Boost 1.45.0 COMPONENTS timer)
+
 IF (Boost_FOUND)
     INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIR})
     ADD_DEFINITIONS( "-DHAS_BOOST" )
+    target_link_libraries(perf-test ${Boost_LIBRARIES})
 ENDIF()
 
 FIND_PACKAGE(OpenSSL)

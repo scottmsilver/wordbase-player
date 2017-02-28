@@ -37,7 +37,8 @@ std::ostream& operator<<(std::ostream& os, const PersistentBoard& foo) {
   return os;
 }
 
-const char* kTempUnecryptedDatabaseFilePath = "/Users/ssilver/foo.db";
+// FIX-ME move to real temporary.
+const char* kTempUnecryptedDatabaseFilePath = "/tmp/foo.db";
 
 class WordbaseAppDb {
   std::shared_ptr<simplesql::Sqlite3Db> mDb;

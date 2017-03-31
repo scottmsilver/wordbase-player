@@ -14,24 +14,58 @@
 const int kBoardHeight = 13;
 const int kBoardWidth = 10;
 
+// One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
+// Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
+// we can take a set of LegalWordLists and merge them together and get a sorted list of LegalWords we wish to visit.
+// Typically they are sorted by goodness/heuristic value, according to whether the maximizer or minimizer is playing.
+//
+// The straightforward way to do this is to merge LegalWordsLists together and sort along the way - turns out that in the
+// "naive" way we build an array of possibilities and then sort that, using mostly a counting sort.
+//
+// However it turns out this merging can be done efficiently if we can use bit operations and borrow some clever
+// principles from counting sort.
+//
+// So we do a kind of cool counting sort.
+// Let's assume we have a unique and relatively small set of integers with max value V to sort.
+//
+// Let's sort as follows:
+//   * Create a bit field where the kth value is on if k is in your set.
+//   * To "sort" you walk through all the bits i from 0 to V and print i, and then your set is sorted.
+//
+// Algorithm analysis:
+//   * O(V) to set the bits and O(V) to print the values, so it's O(V)
+//
+// And for our case, we are taking N lists and merging them in a sorted way. So the merge operation is very fast for us
+// we just take two sets and bitwise or them (which we can get some nice speed ups from our processor...) - it's sub-linear.
+//
+// Since we want to sort by heuristic/goodness value our values will be the goodness values.
+// And since these values have no bound - but the total number are knowable in the board, we calculate their
+// "regular" Goodness Value (which is an int of size 32bits) and then we just sort them once and renumber from 0 to N, where N
+// is total number of valid words in the board - typically about 50k.
+// And then since when we're done we actually need the words and the their renumbered goodness values
+// we have a bunch of bookkeeping to go from a goodness value back to the LegalWord.
 typedef int LegalWordId;
 
+// A unique legal word in a board.
 struct LegalWord {
   LegalWordId mId;
   std::string mWord;
   CoordinateList mWordSequence;
   int mMaximizerGoodness;
   int mMinimizerGoodness;
+
   int mRenumberedMaximizerGoodness;
   int mRenumberedMinimizerGoodness;
 };
 
 
+// Maintains a set of LegalWords for a given board.
+// Each LegalWord has unique id.
 class LegalWordFactory {
   // Next (LegalWord)Id to allocate.
   int mNextId;
   
-  // LegalWord indexed by LegalWordId. As in thew ord  LegalWordId 0 is the first entry in this vector.
+  // LegalWord indexed by LegalWordId. As in the word  LegalWordId 0 is the first entry in this vector.
   std::vector<std::shared_ptr<LegalWord>> mLegalWordMap;
   
   // Maps CoordinateList to a LegalWord.
@@ -135,8 +169,6 @@ public:
       legalWord->mRenumberedMaximizerGoodness = number++;
       mRenumberedMaximizerValueToLegalWord[legalWord->mRenumberedMaximizerGoodness] = legalWord->mId;
     }
-    
-    
   }
   
   const LegalWordId getLegalWordFromRenumberedGoodness(int goodness, bool isMaximizer) const {
@@ -149,10 +181,16 @@ public:
 };
 
 
+// A list of legal words, typically for a position in the board.
 class LegalWordList  {
 private:
+  // The kth bit is set for all k where k is the set of renumbered (unique) minimizer (or maximizer) goodness values for each legal word.
+  // In other words, if the word at (0,0),(1,0),(2,0) had a renumber minimizer (or maximizer) goodness value of 3, then the 3rd bit in the set
+  // would be set.
   boost::dynamic_bitset<> mMinimizerWordIdBits;
   boost::dynamic_bitset<> mMaximizerWordIdBits;
+
+  // The set of LegalWordIds at this position.
   std::vector<int> mLegalWordIds;
   
 public:

@@ -1,6 +1,8 @@
 #ifndef WORDBASEAPP_DB_H
 #define WORDBASEAPP_DB_H
 
+// Code that knows how to open up an encrypted Wordbase database.
+
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <fstream>

@@ -1,9 +1,9 @@
 # wordbase-player
 Plays the game of wordbase.
 
-This tries to be a relatively fast game solver for wordbase. I've tried to optimize the playing of the game to get through the game tree pretty quickly. I try to use or move as little memory as possible when evaluating game states. Right now the big win would come from more pruning by picking better moves - essentially a better heurstic for what moves to consider. Also, I could be doing the actually picking and then sorting of the moves better two. Since this games a pretty high branching factor, the time is dominated by sorting the moves to consider by the heuristic value of each of the possible moves.
+This tries to be a relatively fast game solver for wordbase. I've tried to optimize the playing of the game to get through the game tree pretty quickly. I try to use or move as little memory as possible when evaluating game states. Right now the big win would come from more pruning by picking better moves - essentially a better heuristic for what moves to consider. Also, I could be doing the actual picking and then sorting of the moves better too. Since this game has a pretty high branching factor, the time is dominated by sorting the moves to consider by the heuristic value of each of the possible moves.
 
-The game also doesn't do a great job picking a "best" move when there is no way to win. Since most players real human players won't find the winning moves, this is somethign I should fix.
+The game also doesn't do a great job picking a "best" move when there is no way to win. Since most players are real human players adn they won't find the winning moves, this is somethign I should fix.
 
 On most games if I give it 45 seconds in the release build on a MacBook Pro from a couple of years ago I can get to depth 5.
 

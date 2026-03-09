@@ -209,6 +209,10 @@ struct Algorithm {
   virtual void reset() {}
   
   virtual M get_move(S *state) = 0;
+
+  virtual std::string read_log() const {
+    return "";
+  }
   
   virtual std::string get_name() const = 0;
   
@@ -307,6 +311,27 @@ public:
 
 template<class S, class M>
 struct Minimax : public Algorithm<S, M> {
+  struct SearchStats {
+    bool completed = false;
+    int goodness = 0;
+    int nodes = 0;
+    int leafs = 0;
+    int beta_cuts = 0;
+    int cut_bf_sum = 0;
+    int tt_hits = 0;
+    int tt_exacts = 0;
+    int tt_cuts = 0;
+    int tt_size = 0;
+    int max_depth = 0;
+    double elapsed_seconds = 0.0;
+    double nodes_per_second = 0.0;
+    M best_move;
+
+    double average_cut_branching_factor() const {
+      return beta_cuts == 0 ? 0.0 : static_cast<double>(cut_bf_sum) / beta_cuts;
+    }
+  };
+
   std::unordered_map<size_t, TTEntry<M>> transposition_table;
   double MAX_SECONDS;
   const int MAX_MOVES;
@@ -317,15 +342,17 @@ struct Minimax : public Algorithm<S, M> {
   int nodes, leafs;
   int mMaxDepth;
   bool mUseTranspositionTable;
+  std::ostream* mTraceStream;
+  SearchStats mLastSearchStats;
   
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
   transposition_table(std::unordered_map<size_t, TTEntry<M>>(1000000)),
-  MAX_SECONDS(max_seconds),
-  MAX_MOVES(max_moves),
-  get_goodness(get_goodness),
-  timer(Timer()),
-  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true) {}
+	  MAX_SECONDS(max_seconds),
+	  MAX_MOVES(max_moves),
+	  get_goodness(get_goodness),
+	  timer(Timer()),
+	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {}
   
   void reset() override {
     transposition_table.clear();
@@ -342,6 +369,14 @@ struct Minimax : public Algorithm<S, M> {
   void setUseTranspositionTable(bool useTranspositionTable) {
     mUseTranspositionTable = useTranspositionTable;
   }
+
+  void setTraceStream(std::ostream* traceStream) {
+    mTraceStream = traceStream;
+  }
+
+  const SearchStats& getLastSearchStats() const {
+    return mLastSearchStats;
+  }
   
   M get_move(S *state) override {
     if (state->is_terminal()) {
@@ -353,6 +388,7 @@ struct Minimax : public Algorithm<S, M> {
       get_goodness = std::bind(&State<S,M>::get_goodness, state);
     }
     timer.start();
+    mLastSearchStats = SearchStats();
     M best_move;
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
       LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
@@ -368,24 +404,42 @@ struct Minimax : public Algorithm<S, M> {
       auto result = minimax(state, max_depth, -INF, INF, 0);
       if (result.completed) {
         best_move = result.best_move;
-        std::cout << "goodness: " << result.goodness
-        << " time: " << timer
-        << " move: " << best_move
-        << " nodes: " << nodes
-        << " leafs: " << leafs
-        << " beta_cuts: " << beta_cuts
-        << " cutBF: " << (double) cut_bf_sum / beta_cuts
-        << " tt_hits: " << tt_hits
-        << " tt_exacts: " << tt_exacts
-        << " tt_cuts: " << tt_cuts
-        << " tt_size: " << transposition_table.size()
-        << " max_depth: " << max_depth << std::endl;
+        mLastSearchStats.completed = true;
+        mLastSearchStats.goodness = result.goodness;
+        mLastSearchStats.nodes = nodes;
+        mLastSearchStats.leafs = leafs;
+        mLastSearchStats.beta_cuts = beta_cuts;
+        mLastSearchStats.cut_bf_sum = cut_bf_sum;
+        mLastSearchStats.tt_hits = tt_hits;
+        mLastSearchStats.tt_exacts = tt_exacts;
+        mLastSearchStats.tt_cuts = tt_cuts;
+        mLastSearchStats.tt_size = transposition_table.size();
+        mLastSearchStats.max_depth = max_depth;
+        mLastSearchStats.elapsed_seconds = timer.seconds_elapsed();
+        mLastSearchStats.nodes_per_second = mLastSearchStats.elapsed_seconds == 0.0 ? 0.0 : nodes / mLastSearchStats.elapsed_seconds;
+        mLastSearchStats.best_move = best_move;
+        if (mTraceStream != nullptr) {
+          *mTraceStream << "goodness: " << result.goodness
+            << " time: " << timer
+            << " move: " << best_move
+            << " nodes: " << nodes
+            << " leafs: " << leafs
+            << " beta_cuts: " << beta_cuts
+            << " cutBF: " << mLastSearchStats.average_cut_branching_factor()
+            << " tt_hits: " << tt_hits
+            << " tt_exacts: " << tt_exacts
+            << " tt_cuts: " << tt_cuts
+            << " tt_size: " << transposition_table.size()
+            << " max_depth: " << max_depth << std::endl;
+        }
       }
       LOG(DEBUG) << " } ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       if (timer.exceeded(MAX_SECONDS)) {
         break;
       }
-      std::cout << (double) nodes / timer.seconds_elapsed() << " nodes/s" << std::endl;
+      if (mTraceStream != nullptr) {
+        *mTraceStream << (double) nodes / timer.seconds_elapsed() << " nodes/s" << std::endl;
+      }
     }
     return best_move;
   }

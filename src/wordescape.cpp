@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/format.hpp>
+#include <boost/functional/hash.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
 #include <cstddef>
 #include <fstream>
@@ -218,6 +219,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // Sort moves in order of Goodness. NB: This is probably the slowest part in traversing to the next
     // ply. So we have tried to heavily optimize this sort.
     boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), Goodness(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
+
+    if (max_moves != INF && moves.size() > static_cast<size_t>(max_moves)) {
+      moves.resize(max_moves);
+    }
     
     return moves;
   }
@@ -236,13 +241,19 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         if (mState.get(y, x) == player_to_move) {
-          auto legalWords = mBoard->getLegalWords(y, x);
-          validWordBits |= legalWords.wordBits(this->player_to_move == PLAYER_1);
+          const auto& legalWords = mBoard->getLegalWords(y, x);
+          const auto& wordBits = legalWords.wordBits(this->player_to_move == PLAYER_1);
+          if (wordBits.size() != 0) {
+            validWordBits |= wordBits;
+          }
         }
       }
     }
 
-    std::vector<WordBaseMove> moves(validWordBits.count());
+    const size_t maxMoveCount = max_moves == INF
+      ? validWordBits.count()
+      : std::min(validWordBits.count(), static_cast<size_t>(max_moves));
+    std::vector<WordBaseMove> moves(maxMoveCount);
 
     int moveIndex = 0;
     // Iterate from set bit to set bit, each representing a legal word in our set.
@@ -254,6 +265,9 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
           moves[moveIndex].mLegalWordId = legalWordId;
           moveIndex++;
+          if (moveIndex == static_cast<int>(maxMoveCount)) {
+            break;
+          }
         }
       }
     }
@@ -418,11 +432,14 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   }
   
   bool operator==(const WordBaseState &other) const override {
-    return mState == other.mState && mPlayedWords == other.mPlayedWords;
+    return player_to_move == other.player_to_move && mState == other.mState && mPlayedWords == other.mPlayedWords;
   }
   
   size_t hash() const override {
-    return boost::hash_range(mState.begin(), mState.end());
+    size_t seed = boost::hash_range(mState.begin(), mState.end());
+    boost::hash_combine(seed, player_to_move);
+    boost::hash_combine(seed, boost::hash_range(mPlayedWords.begin(), mPlayedWords.end()));
+    return seed;
   }
   
   const std::vector<std::string> getAlreadyPlayed() const {

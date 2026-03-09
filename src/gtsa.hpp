@@ -384,9 +384,6 @@ struct Minimax : public Algorithm<S, M> {
       state->to_stream(stream);
       throw std::invalid_argument("Given state is terminal:\n" + stream.str());
     }
-    if (get_goodness == nullptr) {
-      get_goodness = std::bind(&State<S,M>::get_goodness, state);
-    }
     timer.start();
     mLastSearchStats = SearchStats();
     M best_move;
@@ -454,7 +451,8 @@ struct Minimax : public Algorithm<S, M> {
     M best_move;
     if (depth == 0 || state->is_terminal()) {
       ++leafs;
-      return {get_goodness(state), best_move, false};
+      const int goodness = get_goodness ? get_goodness(state) : state->get_goodness();
+      return {goodness, best_move, false};
     }
     
     TTEntry<M> entry;
@@ -551,7 +549,7 @@ struct Minimax : public Algorithm<S, M> {
   
   void add_tt_entry(S *state, const TTEntry<M> &entry) {
     auto key = state->hash();
-    transposition_table.insert({key, entry});
+    transposition_table[key] = entry;
   }
   
   void update_tt(S *state, int alpha, int beta, int max_goodness, M &best_move, int depth) {

@@ -17,6 +17,7 @@ TASK_FILE=""
 TASK_DIR=""
 WORKER_NAME=""
 BENCHMARK_LOG=""
+REQUIRE_TASK=0
 
 usage() {
   cat <<'EOF'
@@ -37,6 +38,7 @@ Options:
   --benchmark-log <path>   Worker-local benchmark CSV path
   --task-file <path>       Run a specific task file
   --task-dir <path>        Claim tasks from <path>/pending and move them through the queue
+  --require-task           Only run when a task is assigned (sleep if none)
   --help                   Show this help
 EOF
 }
@@ -90,6 +92,10 @@ while [[ $# -gt 0 ]]; do
     --task-dir)
       TASK_DIR="$2"
       shift 2
+      ;;
+    --require-task)
+      REQUIRE_TASK=1
+      shift
       ;;
     --help|-h)
       usage
@@ -298,6 +304,45 @@ Your job in this iteration:
 EOF
 }
 
+maybe_commit_kept_result() {
+  local last_meta status scenario change_ref
+  if [[ ! -f "$BENCHMARK_LOG" ]]; then
+    return 0
+  fi
+  last_meta="$(awk -F, 'NR>1 { status=$2; scenario=$3; change_ref=$5 } END { print status "|" scenario "|" change_ref }' "$BENCHMARK_LOG")"
+  if [[ -z "$last_meta" ]]; then
+    return 0
+  fi
+  IFS='|' read -r status scenario change_ref <<<"$last_meta"
+  if [[ "$status" != "kept" ]]; then
+    return 0
+  fi
+  if [[ "$scenario" != "profile-suite" && "$scenario" != "profile-suite"* ]]; then
+    return 0
+  fi
+
+  if [[ -z "$(git status --porcelain)" ]]; then
+    return 0
+  fi
+
+  git add -A >/dev/null 2>&1 || true
+  if [[ -f "$BENCHMARK_LOG" ]]; then
+    git add -f "$BENCHMARK_LOG" >/dev/null 2>&1 || true
+  fi
+  if [[ -z "$(git diff --cached --name-only)" ]]; then
+    return 0
+  fi
+
+  local commit_msg
+  if [[ -n "$change_ref" ]]; then
+    commit_msg="Keep ${change_ref}"
+  else
+    commit_msg="Keep benchmark win"
+  fi
+  git commit -m "$commit_msg" >/dev/null 2>&1 || return 0
+  git push origin "$CURRENT_BRANCH" >/dev/null 2>&1 || true
+}
+
 ITERATION=1
 if compgen -G "$STATE_DIR/iteration-*.jsonl" >/dev/null; then
   ITERATION="$(
@@ -327,6 +372,12 @@ while true; do
     if [[ "$ONCE" -eq 1 && -n "$TASK_DIR" ]]; then
       echo "No pending tasks in $TASK_DIR/pending"
       exit 0
+    fi
+    if [[ "$REQUIRE_TASK" -eq 1 && -n "$TASK_DIR" ]]; then
+      echo "No pending tasks in $TASK_DIR/pending; waiting." >&2
+      sleep "$INTERVAL_SECONDS"
+      ITERATION=$((ITERATION + 1))
+      continue
     fi
   fi
 
@@ -380,6 +431,20 @@ while true; do
         if ! mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/failed\/}"; then
           echo "warning: failed to move task to failed: $TASK_PATH" >&2
         fi
+        if [[ -n "$TASK_DIR" ]]; then
+          mkdir -p "$TASK_DIR/failed-results"
+          failed_report="$TASK_DIR/failed-results/$(basename "${TASK_PATH%.md}")--$WORKER_NAME-$(date +%Y%m%d-%H%M%S).txt"
+          {
+            echo "task: $TASK_PATH"
+            echo "worker: $WORKER_NAME"
+            echo "timestamp: $(date -Iseconds)"
+            echo "last_benchmark: $(tail -n 1 "$BENCHMARK_LOG" 2>/dev/null || true)"
+            echo
+            if [[ -f "$LAST_MESSAGE_FILE" ]]; then
+              cat "$LAST_MESSAGE_FILE"
+            fi
+          } >"$failed_report"
+        fi
       fi
     fi
   fi
@@ -387,6 +452,8 @@ while true; do
   if [[ "$cmd_status" -ne 0 ]]; then
     printf 'Worker %s iteration %d failed with exit code %d\n' "$WORKER_NAME" "$ITERATION" "$cmd_status" >&2
   fi
+
+  maybe_commit_kept_result
 
   if [[ "$ONCE" -eq 1 ]]; then
     exit "$cmd_status"

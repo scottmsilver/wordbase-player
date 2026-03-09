@@ -1,12 +1,16 @@
 #ifndef STRING_UTIL_H
 #define STRING_UTIL_H
 
+#include <cctype>
+#include <algorithm>
 #include <sstream>
 #include <string>
 
 // Return string with spaces roved from end of supplied string.
 static inline std::string &rtrim(std::string &s) {
-  s.erase(std::find_if(s.rbegin(), s.rend(), std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
+  s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+    return !std::isspace(ch);
+  }).base(), s.end());
   return s;
 }
 
@@ -22,4 +26,3 @@ std::basic_string<CharT, Traits, Allocator> readStreamIntoString(std::basic_istr
 }
   
 #endif
-

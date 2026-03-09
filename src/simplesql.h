@@ -1,6 +1,7 @@
 #ifndef SIMPLESQL_H
 #define SIMPLESQL_H
 
+#include <iostream>
 #include <sqlite3.h>
 #include <string>
 
@@ -34,7 +35,8 @@ namespace simplesql {
       if (mDb != NULL) {
         int returnCode = ::sqlite3_close(mDb);
         if (returnCode != SQLITE_OK ) {
-          throw Sqlite3Exception("Couldn't close db", mDb, returnCode);
+          std::cerr << "Couldn't close db: " << ::sqlite3_errmsg(mDb)
+                    << " (" << returnCode << ")" << std::endl;
         }
       }
     }

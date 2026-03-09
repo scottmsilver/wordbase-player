@@ -85,8 +85,6 @@ public:
     // Initialized OpenSsl
     ERR_load_crypto_strings();
     OpenSSL_add_all_algorithms();
-    OPENSSL_config(NULL);
-    
     // Decrypt the text.
     std::shared_ptr<char> decryptedtext(new char[ciphertext.size()]);
     int decryptedtext_len = decrypt((unsigned char*)ciphertext.c_str(), ciphertext.size(), (unsigned char*) key.c_str(), NULL,

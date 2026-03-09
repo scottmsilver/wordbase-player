@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MODEL" ]]; then
-  MODEL="gpt-5.2-codex-high"
+  MODEL="gpt-5.2-codex"
 fi
 
 if ! command -v codex >/dev/null 2>&1; then

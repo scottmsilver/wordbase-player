@@ -26,6 +26,8 @@ struct PerfOptions {
   int maxTurns = 200;
   int warmupTurns = 0;
   int repeatSearches = 0;
+  int selfplayGames = 0;
+  std::string selfplayOutPath;
   bool useTranspositionTable = true;
   bool printBoards = false;
 };
@@ -67,6 +69,8 @@ void printUsage(const char* argv0) {
     << "  --max-turns <count>      Stop after this many plies (default 200)\n"
     << "  --warmup-turns <count>   Play unmeasured warm-up plies before timing (default 0)\n"
     << "  --repeat-searches <n>    Re-search the post-warmup position N times without playing moves\n"
+    << "  --selfplay-games <n>     Play N self-play games and emit JSONL (default 0)\n"
+    << "  --selfplay-out <path>    Write self-play JSONL to this file\n"
     << "  --no-tt                  Disable the transposition table\n"
     << "  --print-boards           Print the board after each move\n";
 }
@@ -95,6 +99,10 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.warmupTurns = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--repeat-searches" && index < argc) {
       options.repeatSearches = std::stoi(argv[index++], nullptr, 0);
+    } else if (arg == "--selfplay-games" && index < argc) {
+      options.selfplayGames = std::stoi(argv[index++], nullptr, 0);
+    } else if (arg == "--selfplay-out" && index < argc) {
+      options.selfplayOutPath = argv[index++];
     } else if (arg == "--no-tt") {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
@@ -111,8 +119,55 @@ PerfOptions parseArgs(int argc, char** argv) {
   if (options.repeatSearches < 0) {
     throw std::invalid_argument("--repeat-searches must be non-negative");
   }
+  if (options.selfplayGames < 0) {
+    throw std::invalid_argument("--selfplay-games must be non-negative");
+  }
+  if (options.selfplayGames > 0 && options.selfplayOutPath.empty()) {
+    throw std::invalid_argument("--selfplay-out is required when --selfplay-games is set");
+  }
 
   return options;
+}
+
+std::string jsonEscape(const std::string& input) {
+  std::string escaped;
+  escaped.reserve(input.size() + 8);
+  for (char c : input) {
+    switch (c) {
+      case '\\': escaped += "\\\\"; break;
+      case '"': escaped += "\\\""; break;
+      case '\n': escaped += "\\n"; break;
+      case '\r': escaped += "\\r"; break;
+      case '\t': escaped += "\\t"; break;
+      default: escaped += c; break;
+    }
+  }
+  return escaped;
+}
+
+std::string serializeOwners(const WordBaseState& state) {
+  std::string out;
+  out.reserve(kBoardHeight * kBoardWidth);
+  for (int y = 0; y < kBoardHeight; ++y) {
+    for (int x = 0; x < kBoardWidth; ++x) {
+      char owner = state.mState.get(y, x);
+      out.push_back(static_cast<char>('0' + owner));
+    }
+  }
+  return out;
+}
+
+std::string serializePath(const CoordinateList& path) {
+  std::string out;
+  for (size_t i = 0; i < path.size(); ++i) {
+    out += std::to_string(path[i].first);
+    out += ",";
+    out += std::to_string(path[i].second);
+    if (i + 1 < path.size()) {
+      out += ";";
+    }
+  }
+  return out;
 }
 
 std::string winnerText(const WordBaseState& state) {
@@ -186,6 +241,67 @@ int main(int argc, char** argv) {
       algorithm.setTraceStream(nullptr);
       return algorithm;
     };
+
+    if (options.selfplayGames > 0) {
+      std::ofstream out(options.selfplayOutPath);
+      if (!out.is_open()) {
+        throw std::runtime_error("Could not open selfplay output: \"" + options.selfplayOutPath + "\"");
+      }
+
+      for (int gameIndex = 0; gameIndex < options.selfplayGames; ++gameIndex) {
+        auto algorithm = makeAlgorithm();
+        WordBaseState gameState(&board, PLAYER_1);
+        for (int ply = 0; ply < options.maxTurns && !gameState.is_terminal(); ++ply) {
+          std::vector<WordBaseMove> legalMoves = gameState.get_legal_moves(options.maxMovesPerPosition);
+          if (legalMoves.empty()) {
+            break;
+          }
+
+          WordBaseState searchState(gameState);
+          Timer moveTimer;
+          moveTimer.start();
+          WordBaseMove move = algorithm.get_move(&searchState);
+          double moveSeconds = moveTimer.seconds_elapsed();
+          const auto& searchStats = algorithm.getLastSearchStats();
+          const LegalWord& legalWord = board.getLegalWord(move.mLegalWordId);
+
+          out
+            << "{"
+            << "\"type\":\"move\","
+            << "\"game\":" << gameIndex << ","
+            << "\"ply\":" << ply << ","
+            << "\"player\":" << int(gameState.player_to_move) << ","
+            << "\"board\":\"" << jsonEscape(options.boardText) << "\","
+            << "\"owners\":\"" << serializeOwners(gameState) << "\","
+            << "\"word\":\"" << jsonEscape(legalWord.mWord) << "\","
+            << "\"path\":\"" << serializePath(legalWord.mWordSequence) << "\","
+            << "\"legal_moves\":" << legalMoves.size() << ","
+            << "\"depth\":" << searchStats.max_depth << ","
+            << "\"nodes\":" << searchStats.nodes << ","
+            << "\"leafs\":" << searchStats.leafs << ","
+            << "\"beta_cuts\":" << searchStats.beta_cuts << ","
+            << "\"tt_hits\":" << searchStats.tt_hits << ","
+            << "\"nps\":" << searchStats.nodes_per_second << ","
+            << "\"seconds\":" << moveSeconds
+            << "}"
+            << "\n";
+
+          gameState.make_move(move);
+        }
+
+        out
+          << "{"
+          << "\"type\":\"summary\","
+          << "\"game\":" << gameIndex << ","
+          << "\"winner\":\"" << winnerText(gameState) << "\","
+          << "\"goodness\":" << gameState.get_goodness() << ","
+          << "\"terminal\":" << (gameState.is_terminal() ? "true" : "false")
+          << "}"
+          << "\n";
+      }
+
+      return 0;
+    }
 
     auto algorithm = makeAlgorithm();
 

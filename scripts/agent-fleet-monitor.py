@@ -294,7 +294,9 @@ def worker_infos() -> List[WorkerInfo]:
         current_task, current_task_state = latest_task_for_worker(name)
         latest_activity, latest_activity_age_seconds = latest_activity_line(name)
         codex = find_codex_process(worktree)
-        bench_path = worktree / "benchmark-progress.csv"
+        bench_path = worktree / "logs" / "agent-loop" / name / "benchmark-progress.csv"
+        if not bench_path.exists():
+            bench_path = worktree / "benchmark-progress.csv"
         kept, discarded = read_benchmark_rows(bench_path)
         recent_profile = read_recent_profile_nodes(bench_path)
         baseline_profile = read_profile_baseline(bench_path)

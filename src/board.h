@@ -18,6 +18,11 @@
 
 const int kBoardHeight = 13;
 const int kBoardWidth = 10;
+const int kWordLengthWeight = 16;
+const int kWordProgressWeight = 32;
+const int kBombTouchWeight = 96;
+const int kMegabombTouchWeight = 192;
+const int kSquareWordCountDivisor = 1;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -114,6 +119,14 @@ public:
   
   // Return the LegalWord for the given id.
   const LegalWord& getWord(LegalWordId id) const {
+    if (id < mNextId && id >= 0) {
+      return *mLegalWordMap[id];
+    } else {
+      throw;
+    }
+  }
+
+  LegalWord& mutableWord(LegalWordId id) {
     if (id < mNextId && id >= 0) {
       return *mLegalWordMap[id];
     } else {
@@ -262,6 +275,8 @@ class BoardStatic {
   
   // The location of the mega-bombs on the board; each entry in the CoordinateList is the location of a mega-bomb.
   CoordinateList mMegabombs;
+
+  Grid<int, kBoardHeight, kBoardWidth> mSquareWordCounts;
   
 public:
   std::vector<char> mGrid;
@@ -297,6 +312,8 @@ public:
     }
     
     findLegalWordsForGrid();
+    initializeSquareWordCounts();
+    recomputeLegalWordGoodness();
     mLegalWordFactory.finalizeEquivalentWordIds();
     mLegalWordFactory.renumberByGoodness();
     
@@ -380,6 +397,22 @@ public:
   const CoordinateList& getMegabombs() const { return mMegabombs; }
   
 private:
+  void initializeSquareWordCounts() {
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        mSquareWordCounts.set(y, x, static_cast<int>(mLegalWords.get(y, x).size()));
+      }
+    }
+  }
+
+  void recomputeLegalWordGoodness() {
+    for (LegalWordId legalWordId = 0; legalWordId < mLegalWordFactory.getSize(); ++legalWordId) {
+      LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
+      legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence);
+      legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence);
+    }
+  }
+
   bool pathTouches(const CoordinateList& wordSequence, const CoordinateList& targets) const {
     for (const auto& cell : wordSequence) {
       if (std::find(targets.begin(), targets.end(), cell) != targets.end()) {
@@ -387,6 +420,14 @@ private:
       }
     }
     return false;
+  }
+
+  int squareWordCountBonus(const CoordinateList& wordSequence) const {
+    int bonus = 0;
+    for (const auto& cell : wordSequence) {
+      bonus += mSquareWordCounts.get(cell.first, cell.second);
+    }
+    return bonus / kSquareWordCountDivisor;
   }
 
   int maximizerGoodness(const CoordinateList& wordSequence) const {
@@ -397,14 +438,15 @@ private:
       furthestRow = std::max(furthestRow, x.first);
     }
 
-    maximizerGoodness += static_cast<int>(wordSequence.size()) * 16;
-    maximizerGoodness += furthestRow * 32;
+    maximizerGoodness += static_cast<int>(wordSequence.size()) * kWordLengthWeight;
+    maximizerGoodness += furthestRow * kWordProgressWeight;
     if (pathTouches(wordSequence, mBombs)) {
-      maximizerGoodness += 96;
+      maximizerGoodness += kBombTouchWeight;
     }
     if (pathTouches(wordSequence, mMegabombs)) {
-      maximizerGoodness += 192;
+      maximizerGoodness += kMegabombTouchWeight;
     }
+    maximizerGoodness += squareWordCountBonus(wordSequence);
 
     return maximizerGoodness;
   }
@@ -417,14 +459,15 @@ private:
       furthestRow = std::min(furthestRow, x.first);
     }
 
-    minimizerGoodness += static_cast<int>(moveSequence.size()) * 16;
-    minimizerGoodness += (kBoardHeight - 1 - furthestRow) * 32;
+    minimizerGoodness += static_cast<int>(moveSequence.size()) * kWordLengthWeight;
+    minimizerGoodness += (kBoardHeight - 1 - furthestRow) * kWordProgressWeight;
     if (pathTouches(moveSequence, mBombs)) {
-      minimizerGoodness += 96;
+      minimizerGoodness += kBombTouchWeight;
     }
     if (pathTouches(moveSequence, mMegabombs)) {
-      minimizerGoodness += 192;
+      minimizerGoodness += kMegabombTouchWeight;
     }
+    minimizerGoodness += squareWordCountBonus(moveSequence);
 
     return minimizerGoodness;
   }

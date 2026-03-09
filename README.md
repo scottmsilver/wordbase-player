@@ -64,6 +64,7 @@ Use the checked-in benchmark scenarios instead of ad hoc command lines when comp
 ./scripts/run-benchmarks.sh long
 ./scripts/run-benchmarks.sh short-no-tt
 ./scripts/run-benchmarks.sh profile
+./scripts/run-benchmarks.sh profile-suite
 ```
 
 The current intended meanings are:
@@ -71,6 +72,9 @@ The current intended meanings are:
 - `long`: longer confirmation run with two warm-up turns
 - `short-no-tt`: same short baseline with the transposition table disabled
 - `profile`: repeated searches on the same post-warmup position so sampling profilers see steady-state search work instead of startup/setup
+- `profile-suite`: the same repeated-search measurement across several checked-in board texts so we can catch heuristics that only help one board
+
+The suite is deterministic on purpose. We keep one fixed-board benchmark for tight A/B comparisons, then use the checked-in suite in [benchmark-board-suite.txt](/home/ssilver/development/wordbase-player/scripts/benchmark-board-suite.txt) to make sure a change generalizes beyond the README board.
 
 Agent Loop
 

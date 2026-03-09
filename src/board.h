@@ -23,13 +23,18 @@ const int kWordProgressWeight = 32;
 const int kBombTouchWeight = 96;
 const int kMegabombTouchWeight = 192;
 // Reward paths that claim squares which are strong future anchors in this board's legal-word graph.
-// Example: if one move claims cells whose start squares collectively have 200 legal starts on this board
-// and another claims cells with only 80, the first move usually leaves more follow-up options next turn.
+// Example: on the README board, owning squares along the "glamorize/glamorized/glamorizer/glamorizes"
+// lane is better than owning a side path that mostly leaves short follow-ups like "glass".
 const int kSquareWordCountDivisor = 1;
 // Reward paths whose claimed squares unlock a broad set of distinct future starts, not just many overlapping ones.
-// Example: claiming three squares that together unlock {stare, stern, sting, stone} is better than
-// three squares that mostly unlock the same small family of words over and over.
+// Example: a path that leaves you starts for {"stare", "stern", "sting", "stone"} is stronger than
+// one that mostly repeats the same family like {"glamorize", "glamorized", "glamorizer", "glamorizes"}.
 const int kFutureMoveDiversityDivisor = 2;
+// Reward paths that preserve a broad set of long attacking follow-ups.
+// Example: keeping starts for {"glamorize", "glamorized", "glamorizer", "glamorizes"} is usually
+// more dangerous than keeping mostly short continuations like {"glass", "glam"}.
+const int kLongFutureMoveLength = 8;
+const int kLongFutureMoveDiversityDivisor = 4;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -410,7 +415,8 @@ private:
   void initializeSquareWordCounts() {
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
-        mSquareWordCounts.set(y, x, static_cast<int>(mLegalWords.get(y, x).size()));
+        const LegalWordList& legalWords = mLegalWords.get(y, x);
+        mSquareWordCounts.set(y, x, static_cast<int>(legalWords.size()));
       }
     }
   }
@@ -421,10 +427,15 @@ private:
       legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence);
       legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence);
       // Two paths can touch similarly "good" squares but leave very different follow-up move sets.
-      // For example, one path may unlock 40 distinct next-turn words while another only unlocks 15.
+      // For example, one path may preserve starts for "stare", "stern", "sting", and "stone",
+      // while another mainly keeps variants of the same stem such as "glamorized"/"glamorizer".
       const int diversityBonus = futureMoveDiversityBonus(legalWord.mWordSequence);
+      // Long follow-ups are rarer and more threatening, so reward broad long-word continuation sets separately.
+      const int longDiversityBonus = longFutureMoveDiversityBonus(legalWord.mWordSequence);
       legalWord.mMaximizerGoodness += diversityBonus;
       legalWord.mMinimizerGoodness += diversityBonus;
+      legalWord.mMaximizerGoodness += longDiversityBonus;
+      legalWord.mMinimizerGoodness += longDiversityBonus;
     }
   }
 
@@ -447,8 +458,8 @@ private:
 
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
     // This is build-time work only: estimate how many distinct future starts this path unlocks.
-    // Example: if a claimed path covers squares whose start sets union to 120 unique words, we give it
-    // more credit than a path whose claimed squares union to only 50 unique words.
+    // Example: if the claimed squares leave both "stare" and "stone" available next turn, that is
+    // better than leaving only the "glamorize" family, even if both paths look similarly advanced.
     ++mCurrentScratchGeneration;
     if (mCurrentScratchGeneration == 0) {
       std::fill(mLegalWordScratchGeneration.begin(), mLegalWordScratchGeneration.end(), 0);
@@ -467,6 +478,32 @@ private:
     }
 
     return uniqueMoves / kFutureMoveDiversityDivisor;
+  }
+
+  int longFutureMoveDiversityBonus(const CoordinateList& wordSequence) {
+    // Count only distinct long continuations so we do not overvalue paths that mostly preserve short cleanup words.
+    ++mCurrentScratchGeneration;
+    if (mCurrentScratchGeneration == 0) {
+      std::fill(mLegalWordScratchGeneration.begin(), mLegalWordScratchGeneration.end(), 0);
+      mCurrentScratchGeneration = 1;
+    }
+
+    int uniqueLongMoves = 0;
+    for (const auto& cell : wordSequence) {
+      const LegalWordList& legalWordList = mLegalWords.get(cell.first, cell.second);
+      for (auto legalWordId : legalWordList) {
+        const LegalWord& legalWord = mLegalWordFactory.getWord(legalWordId);
+        if (legalWord.mWordSequence.size() < kLongFutureMoveLength) {
+          continue;
+        }
+        if (mLegalWordScratchGeneration[legalWordId] != mCurrentScratchGeneration) {
+          mLegalWordScratchGeneration[legalWordId] = mCurrentScratchGeneration;
+          ++uniqueLongMoves;
+        }
+      }
+    }
+
+    return uniqueLongMoves / kLongFutureMoveDiversityDivisor;
   }
   int maximizerGoodness(const CoordinateList& wordSequence) const {
     int maximizerGoodness = 0;

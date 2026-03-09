@@ -359,6 +359,7 @@ def snapshot_lines() -> List[str]:
         f"Latest pending: {latest_file_name(TASK_DIR / 'pending')}",
         f"Latest done:    {latest_file_name(TASK_DIR / 'done')}",
         f"Pending list:  {', '.join([p.name for p in sorted((TASK_DIR / 'pending').glob('*.md'))][:5]) or '-'}",
+        f"Pending per worker: {counts['pending'] / max(1, len(workers)):.1f}",
         "",
         f"Master wrapper: {master_pid.state} pid={master_pid.pid or '-'}",
         f"Master job:     {master_state} pid={master_job.pid or '-'} note_age={format_age(master_note_age_seconds)}",

@@ -39,6 +39,10 @@ const int kLongFutureMoveDiversityDivisor = 4;
 // Example: a square that mostly sits inside deep lanes like "perilled" should beat one whose words stall in place,
 // even if both squares participate in the same raw number of legal words.
 const int kSquareForwardReachDivisor = 4;
+// Reward squares that still have several goalward rows left after you claim them, not just squares that already sit deep.
+// Example: a middle "perilled" square that still reaches six more rows should beat an advanced "eel" cleanup square
+// whose words usually finish one row later and leave almost no runway for the following turn.
+const int kSquareRemainingGoalwardReachDivisor = 4;
 // Reward squares that fan out into multiple goalward continuations, not just the single routine next step.
 // Example: a "perilled" interior square that can branch into several deeper attacks should beat an "eel" pocket
 // whose words mostly keep only one non-retreating continuation toward the opponent.
@@ -299,6 +303,8 @@ class BoardStatic {
   Grid<int, kBoardHeight, kBoardWidth> mSquareWordCounts;
   Grid<int, kBoardHeight, kBoardWidth> mMaximizerSquareForwardReach;
   Grid<int, kBoardHeight, kBoardWidth> mMinimizerSquareForwardReach;
+  Grid<int, kBoardHeight, kBoardWidth> mMaximizerSquareRemainingGoalwardReach;
+  Grid<int, kBoardHeight, kBoardWidth> mMinimizerSquareRemainingGoalwardReach;
   Grid<int, kBoardHeight, kBoardWidth> mMaximizerSquareGoalwardBranching;
   Grid<int, kBoardHeight, kBoardWidth> mMinimizerSquareGoalwardBranching;
   std::vector<int> mLegalWordScratchGeneration;
@@ -340,6 +346,7 @@ public:
     findLegalWordsForGrid();
     initializeSquareWordCounts();
     initializeSquareForwardReach();
+    initializeSquareRemainingGoalwardReach();
     initializeSquareGoalwardBranching();
     mLegalWordScratchGeneration.assign(mLegalWordFactory.getSize(), 0);
     recomputeLegalWordGoodness();
@@ -498,6 +505,32 @@ private:
     }
   }
 
+  void initializeSquareRemainingGoalwardReach() {
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        const LegalWordList& legalWords = mLegalWords.get(y, x);
+        int maximizerRemainingReachTotal = 0;
+        int minimizerRemainingReachTotal = 0;
+        for (auto legalWordId : legalWords) {
+          const LegalWord& legalWord = mLegalWordFactory.getWord(legalWordId);
+          int furthestRow = 0;
+          int nearestRow = kBoardHeight - 1;
+          for (const auto& cell : legalWord.mWordSequence) {
+            furthestRow = std::max(furthestRow, cell.first);
+            nearestRow = std::min(nearestRow, cell.first);
+          }
+
+          maximizerRemainingReachTotal += std::max(0, furthestRow - y);
+          minimizerRemainingReachTotal += std::max(0, y - nearestRow);
+        }
+
+        const int legalWordCount = static_cast<int>(legalWords.size());
+        mMaximizerSquareRemainingGoalwardReach.set(y, x, legalWordCount == 0 ? 0 : maximizerRemainingReachTotal / legalWordCount);
+        mMinimizerSquareRemainingGoalwardReach.set(y, x, legalWordCount == 0 ? 0 : minimizerRemainingReachTotal / legalWordCount);
+      }
+    }
+  }
+
   void recomputeLegalWordGoodness() {
     for (LegalWordId legalWordId = 0; legalWordId < mLegalWordFactory.getSize(); ++legalWordId) {
       LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
@@ -551,6 +584,16 @@ private:
       bonus += squareGoalwardBranching.get(cell.first, cell.second);
     }
     return bonus / kSquareGoalwardBranchingDivisor;
+  }
+
+  int squareRemainingGoalwardReachBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int bonus = 0;
+    const Grid<int, kBoardHeight, kBoardWidth>& squareRemainingGoalwardReach =
+      isMaximizer ? mMaximizerSquareRemainingGoalwardReach : mMinimizerSquareRemainingGoalwardReach;
+    for (const auto& cell : wordSequence) {
+      bonus += squareRemainingGoalwardReach.get(cell.first, cell.second);
+    }
+    return bonus / kSquareRemainingGoalwardReachDivisor;
   }
 
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
@@ -620,6 +663,7 @@ private:
     }
     maximizerGoodness += squareWordCountBonus(wordSequence);
     maximizerGoodness += squareForwardReachBonus(wordSequence, true);
+    maximizerGoodness += squareRemainingGoalwardReachBonus(wordSequence, true);
     maximizerGoodness += squareGoalwardBranchingBonus(wordSequence, true);
 
     return maximizerGoodness;
@@ -643,6 +687,7 @@ private:
     }
     minimizerGoodness += squareWordCountBonus(moveSequence);
     minimizerGoodness += squareForwardReachBonus(moveSequence, false);
+    minimizerGoodness += squareRemainingGoalwardReachBonus(moveSequence, false);
     minimizerGoodness += squareGoalwardBranchingBonus(moveSequence, false);
 
     return minimizerGoodness;

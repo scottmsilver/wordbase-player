@@ -181,6 +181,12 @@ struct State {
 
   virtual std::vector<M> get_legal_moves(int max_moves) const = 0;
 
+  // Fill a caller-provided vector with legal moves, reusing its capacity.
+  // Default implementation delegates to get_legal_moves; subclasses can override.
+  virtual void fill_legal_moves(std::vector<M>& out, int max_moves) const {
+    out = get_legal_moves(max_moves);
+  }
+
   virtual char get_enemy(char player) const = 0;
 
   virtual bool is_terminal() const = 0;
@@ -511,9 +517,14 @@ struct Minimax : public Algorithm<S, M> {
 
     int max_goodness = -INF;
     bool completed = true;
-    std::vector<M> legal_moves = (indent == 0 && mHasCachedRootMoves)
+    // Reuse per-depth move buffers to avoid heap allocation in the search loop.
+    static std::vector<M> depth_move_buffers[64];
+    std::vector<M>& legal_moves = (indent == 0 && mHasCachedRootMoves)
       ? mCachedRootMoves
-      : state->get_legal_moves(MAX_MOVES);
+      : depth_move_buffers[indent];
+    if (!(indent == 0 && mHasCachedRootMoves)) {
+      state->fill_legal_moves(legal_moves, MAX_MOVES);
+    }
 
     assert(legal_moves.size() > 0);
     bool found_best_move = false;

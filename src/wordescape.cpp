@@ -155,6 +155,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   InlineBitset mPlayedWords;
   size_t mHashValue;
   uint64_t mTtVerificationKey;
+  int mGoodnessAccum;
   bool mTookEnemyCell;
 
   WordBaseState(BoardStatic* board, char playerToMove)
@@ -163,18 +164,20 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       mPlayedWords(mBoard->getLegalWordsSize()),
       mHashValue(0),
       mTtVerificationKey(0),
+      mGoodnessAccum(0),
       mTookEnemyCell(false) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
     mHashValue = computeHashFromState();
     mTtVerificationKey = computeVerificationKeyFromState();
+    mGoodnessAccum = computeGoodnessAccum();
   }
 
   // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
-  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mTookEnemyCell(false) {
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mGoodnessAccum(rhs.mGoodnessAccum), mTookEnemyCell(false) {
   }
 
   WordBaseState clone() const override {
@@ -235,10 +238,32 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     return mixVerificationToken(static_cast<uint64_t>(static_cast<unsigned char>(player)) ^ 0xa4093822299f31d0ULL);
   }
 
+  static int goodnessContrib(char owner, int y) {
+    if (owner == PLAYER_1) return (y + 1) * (y + 1);
+    if (owner == PLAYER_2) return -1 * (y - kBoardHeight) * (y - kBoardHeight);
+    return 0;
+  }
+
+  int computeGoodnessAccum() const {
+    int h = 0;
+    for (int y = 1; y < kBoardHeight - 1; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        h += goodnessContrib(mState.get(y, x), y);
+      }
+    }
+    return h;
+  }
+
   void setCellState(int y, int x, char owner) {
     const char currentOwner = mState.get(y, x);
     if (currentOwner == owner) {
       return;
+    }
+
+    // Update incremental goodness for non-edge rows.
+    if (y > 0 && y < kBoardHeight - 1) {
+      mGoodnessAccum -= goodnessContrib(currentOwner, y);
+      mGoodnessAccum += goodnessContrib(owner, y);
     }
 
     mHashValue ^= cellHashToken(y, x, currentOwner);
@@ -303,40 +328,18 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // Return the value of this board state from the perspective of the given player.
   // In other words, it should be positive if player_to_move has an advantage.
   int get_goodness() const override {
-    int h = 0;
-
-    // First look for the terminal conditions.
-    // FIX-ME combine this with is_terminal, with one that can say which player was terminal.
+    // Check terminal conditions on edge rows.
     for (int x = 0; x < kBoardWidth; x++) {
       if (mState.get(0, x) == PLAYER_2) {
-        h = -INF;
-        break;
+        return (player_to_move == PLAYER_1 ? 1 : -1) * -INF;
       }
-
       if (mState.get(kBoardHeight - 1, x) == PLAYER_1) {
-        assert(h != -INF);
-        h = INF;
-        break;
-      }
-    }
-
-    // Since messing with h if h == INF will cause it to overflow, don't touch it.
-    if (h != INF && h != -INF) {
-      for (int y = 1; y < kBoardHeight - 1; y++) {
-        for (int x = 0; x < kBoardWidth; x++) {
-          char state = mState.get(y, x);
-          if (state == PLAYER_1) {
-            h += (y + 1) * (y + 1);
-          } else if (state == PLAYER_2) {
-            h += -1 * (y - kBoardHeight) * (y - kBoardHeight);
-          }
-        }
+        return (player_to_move == PLAYER_1 ? 1 : -1) * INF;
       }
     }
 
     int color = player_to_move == PLAYER_1 ? 1 : -1;
-
-    return h * color;
+    return mGoodnessAccum * color;
   }
 
   // Return all the legal moves from this current state, only consider a maximum
@@ -410,13 +413,14 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       }
     }
 
-    const size_t totalCount = validWordBits.count();
+    // When max_moves is bounded (the common case during search), skip the
+    // expensive count() and just collect up to max_moves.
     const size_t maxMoveCount = max_moves == INF
-      ? totalCount
-      : std::min(totalCount, static_cast<size_t>(max_moves));
-    std::vector<WordBaseMove> moves(maxMoveCount);
+      ? validWordBits.count()
+      : static_cast<size_t>(max_moves);
+    std::vector<WordBaseMove> moves;
+    moves.reserve(maxMoveCount);
 
-    int moveIndex = 0;
     // Iterate from set bit to set bit, each representing a legal word in our set.
     for (size_t renumberedGoodness = validWordBits.find_first(); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
       LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
@@ -424,17 +428,50 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       // Ensure already played words are ignored.
       if (!mPlayedWords[legalWordId]) {
         if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
-          moves[moveIndex].mLegalWordId = legalWordId;
-          moveIndex++;
-          if (moveIndex == static_cast<int>(maxMoveCount)) {
+          moves.push_back(WordBaseMove(legalWordId));
+          if (moves.size() == maxMoveCount) {
             break;
           }
         }
       }
     }
 
-    moves.resize(moveIndex);
     return moves;
+  }
+
+  // Fill a caller-provided vector, reusing its heap allocation across calls.
+  void fill_legal_moves(std::vector<WordBaseMove>& out, int max_moves) const override {
+    static boost::dynamic_bitset<> validWordBits;
+    const int legalWordsSize = mBoard->getLegalWordsSize();
+    validWordBits.resize(legalWordsSize);
+    validWordBits.reset();
+
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        if (mState.get(y, x) == player_to_move) {
+          const auto& legalWords = mBoard->getLegalWords(y, x);
+          const auto& wordBits = legalWords.wordBits(this->player_to_move == PLAYER_1);
+          if (wordBits.size() != 0) {
+            validWordBits |= wordBits;
+          }
+        }
+      }
+    }
+
+    out.clear();
+    const size_t maxMoveCount = max_moves == INF
+      ? validWordBits.count()
+      : static_cast<size_t>(max_moves);
+
+    for (size_t renumberedGoodness = validWordBits.find_first(); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
+      LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
+      if (!mPlayedWords[legalWordId]) {
+        out.push_back(WordBaseMove(legalWordId));
+        if (out.size() == maxMoveCount) {
+          break;
+        }
+      }
+    }
   }
 
   char get_enemy(char player) const override {
@@ -583,21 +620,36 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     recordMove(move);
 
     // Only check connectivity if enemy cells were taken (otherwise no disconnection possible).
+    //
+    // Key insight: only the ENEMY's territory can be disconnected. The moving
+    // player's cells can never lose connectivity because every word starts from
+    // a cell they already own (connected to their home row) and extends through
+    // adjacent cells. So all their cells either existed before (still connected)
+    // or were just placed (connected via the word path).
+    //
+    // Example: Player 1 (top) plays a word that cuts through Player 2's territory:
+    //   Before:          After:
+    //   1 1 1 1 1        1 1 1 1 1      <- P1 home row
+    //   . 2 2 . .        . 1 1 . .      <- P1 took these P2 cells
+    //   . 2 . . .        . 2 . . .      <- this P2 cell is now disconnected
+    //   2 2 2 2 2        2 2 2 2 2      <- P2 home row
+    //
+    // We only flood-fill from the enemy's home edge, cutting work roughly in half
+    // vs checking both players.
     if (mTookEnemyCell) {
-      // Mark from all possible roots; the two sides of the board.
-      for (int y : {0, kBoardHeight - 1}) {
-        for (int x = 0; x < kBoardWidth; x++) {
-          markConnected(y, x, mState.get(y, x));
-        }
+      const char enemy = get_enemy(player_to_move);
+      const int enemyEdge = (enemy == PLAYER_1) ? 0 : (kBoardHeight - 1);
+      for (int x = 0; x < kBoardWidth; x++) {
+        markConnected(enemyEdge, x, enemy);
       }
 
-      // Clear visited marks and disconnect any unreached owned cells.
+      // Clear visited marks on enemy cells and disconnect unreached enemy cells.
       for (int y = 0; y < kBoardHeight; y++) {
         for (int x = 0; x < kBoardWidth; x++) {
-          char owner = mState.get(y, x);
-          if (owner & 0x8) {
-            mState.set(y, x, owner & 0x7);
-          } else if (owner != PLAYER_UNOWNED && owner != PLAYER_BOMB && owner != PLAYER_MEGABOMB) {
+          const char owner = mState.get(y, x);
+          if (owner == (enemy | 0x8)) {
+            mState.set(y, x, enemy);
+          } else if (owner == enemy) {
             setCellState(y, x, PLAYER_UNOWNED);
           }
         }

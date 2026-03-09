@@ -508,8 +508,21 @@ private:
     return false;
   }
 
-  int squareWordCountBonus(const CoordinateList& wordSequence) const {
-    return squareWordCountTotal(wordSequence) / kSquareWordCountDivisor;
+  int squareWordCountBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int total = 0;
+    const Grid<int, kBoardHeight, kBoardWidth>& squareForwardReach =
+      isMaximizer ? mMaximizerSquareForwardReach : mMinimizerSquareForwardReach;
+    for (const auto& cell : wordSequence) {
+      const int squareWordCount = mSquareWordCounts.get(cell.first, cell.second);
+      const int forwardReach = squareForwardReach.get(cell.first, cell.second);
+      const int clampedForwardReach = std::min(forwardReach, kSquareForwardReachDivisor);
+      // Dense anchor squares should keep full credit only when their nearby words also keep
+      // driving toward the goal line. Example: a PERILLED corridor stays fully valued, while
+      // a crowded STONE cleanup pocket is discounted if its local words mostly stall in place.
+      total += squareWordCount * (kSquareForwardReachDivisor + clampedForwardReach) /
+        (2 * kSquareForwardReachDivisor);
+    }
+    return total / kSquareWordCountDivisor;
   }
 
   int squareWordCountTotal(const CoordinateList& wordSequence) const {
@@ -607,7 +620,7 @@ private:
     if (pathTouches(wordSequence, mMegabombs)) {
       maximizerGoodness += kMegabombTouchWeight;
     }
-    maximizerGoodness += squareWordCountBonus(wordSequence);
+    maximizerGoodness += squareWordCountBonus(wordSequence, true);
     maximizerGoodness += squareForwardReachBonus(wordSequence, true);
 
     return maximizerGoodness;
@@ -629,7 +642,7 @@ private:
     if (pathTouches(moveSequence, mMegabombs)) {
       minimizerGoodness += kMegabombTouchWeight;
     }
-    minimizerGoodness += squareWordCountBonus(moveSequence);
+    minimizerGoodness += squareWordCountBonus(moveSequence, false);
     minimizerGoodness += squareForwardReachBonus(moveSequence, false);
 
     return minimizerGoodness;

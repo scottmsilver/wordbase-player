@@ -35,3 +35,4 @@ timestamp,status,scenario,commit,change_ref,total_nodes,avg_nodes_per_turn,deepe
 2026-03-08T20:14:09-07:00,discarded,profile,working-tree,wordbase-long-word-count,17775,3555,2,"Counting long future words per square was another unstable anchor-quality signal and was reverted"
 2026-03-08T20:14:09-07:00,kept,profile,working-tree,wordbase-long-future-diversity,364230,72846,3,"Added a long-word diversity bonus so paths preserving many distinct long threats are ordered earlier; profile rose from 354475 to 364230"
 2026-03-08T21:21:32-07:00,kept,profile,0ca2b91,find-first-renumbered-goodness,364230,72846,3,Use_find_first_no_behavior_change
+2026-03-08T21:22:25-07:00,discarded,profile,working-tree,wordbase-bend-penalty-k8,363915,72783,3,"Added a small bend penalty to prefer straighter lanes; repeated-search nodes regressed slightly vs baseline 364230 so reverting"

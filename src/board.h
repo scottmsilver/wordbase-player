@@ -39,6 +39,9 @@ const int kLongFutureMoveDiversityDivisor = 4;
 // Example: a square that mostly sits inside deep lanes like "perilled" should beat one whose words stall in place,
 // even if both squares participate in the same raw number of legal words.
 const int kSquareForwardReachDivisor = 4;
+// Add a lighter extra nudge once a path is already across midfield, so support on advanced cells like the
+// upper-half "interrobang" spine beats the same reach value spent mostly on home-row cleanup traffic.
+const int kAdvancedSquareForwardReachDivisor = 8;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -507,6 +510,20 @@ private:
     return bonus / kSquareForwardReachDivisor;
   }
 
+  int advancedSquareForwardReachBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int bonus = 0;
+    const Grid<int, kBoardHeight, kBoardWidth>& squareForwardReach =
+      isMaximizer ? mMaximizerSquareForwardReach : mMinimizerSquareForwardReach;
+    for (const auto& cell : wordSequence) {
+      const int progress = isMaximizer ? cell.first : (kBoardHeight - 1 - cell.first);
+      if (progress < kBoardHeight / 2) {
+        continue;
+      }
+      bonus += squareForwardReach.get(cell.first, cell.second);
+    }
+    return bonus / kAdvancedSquareForwardReachDivisor;
+  }
+
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
     // This is build-time work only: estimate how many distinct future starts this path unlocks.
     // Example: if the claimed squares leave both "stare" and "stone" available next turn, that is
@@ -574,6 +591,7 @@ private:
     }
     maximizerGoodness += squareWordCountBonus(wordSequence, true);
     maximizerGoodness += squareForwardReachBonus(wordSequence, true);
+    maximizerGoodness += advancedSquareForwardReachBonus(wordSequence, true);
 
     return maximizerGoodness;
   }
@@ -596,6 +614,7 @@ private:
     }
     minimizerGoodness += squareWordCountBonus(moveSequence, false);
     minimizerGoodness += squareForwardReachBonus(moveSequence, false);
+    minimizerGoodness += advancedSquareForwardReachBonus(moveSequence, false);
 
     return minimizerGoodness;
   }

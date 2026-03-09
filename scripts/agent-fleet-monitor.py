@@ -375,6 +375,7 @@ def draw_screen(stdscr, interval: float) -> None:
     initialize_colors()
     stdscr.nodelay(True)
     stdscr.timeout(int(interval * 1000))
+    stdscr.keypad(True)
     spinner_frames = "|/-\\"
     tick = 0
     scroll = 0
@@ -433,6 +434,9 @@ def draw_screen(stdscr, interval: float) -> None:
                 break
             attr = curses.color_pair(color_pair) if color_pair else curses.A_NORMAL
             stdscr.addnstr(row, 0, line, max_x - 1, attr)
+        if max_scroll > 0 and max_y >= 1:
+            status = f"scroll {scroll}/{max_scroll} lines {max_y}/{total_lines}"
+            stdscr.addnstr(max_y - 1, max(0, max_x - len(status) - 1), status, len(status))
         stdscr.refresh()
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):

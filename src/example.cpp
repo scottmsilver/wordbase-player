@@ -90,6 +90,47 @@ namespace {
     }
   };
 
+  bool ownsConnectedToEdge(const WordBaseState& state, char owner, int edgeRow) {
+    std::vector<std::pair<int, int> > stack;
+    std::vector<std::vector<bool> > visited(kBoardHeight, std::vector<bool>(kBoardWidth, false));
+
+    for (int x = 0; x < kBoardWidth; x++) {
+      if (state.mState.get(edgeRow, x) == owner) {
+        stack.push_back(std::make_pair(edgeRow, x));
+      }
+    }
+
+    while (!stack.empty()) {
+      std::pair<int, int> cell = stack.back();
+      stack.pop_back();
+
+      const int y = cell.first;
+      const int x = cell.second;
+      if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth || visited[y][x] || state.mState.get(y, x) != owner) {
+        continue;
+      }
+
+      visited[y][x] = true;
+      for (int deltaY = -1; deltaY <= 1; deltaY++) {
+        for (int deltaX = -1; deltaX <= 1; deltaX++) {
+          if (deltaY != 0 || deltaX != 0) {
+            stack.push_back(std::make_pair(y + deltaY, x + deltaX));
+          }
+        }
+      }
+    }
+
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        if (state.mState.get(y, x) == owner && !visited[y][x]) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   // The fixture for testing class Foo.
   class FooTest : public ::testing::Test {
   protected:
@@ -187,6 +228,8 @@ namespace {
     const std::vector<std::string> alreadyPlayed = state.getAlreadyPlayed();
     ASSERT_EQ(alreadyPlayed.size(), 1);
     EXPECT_EQ(alreadyPlayed[0], "glamorizes");
+    EXPECT_TRUE(ownsConnectedToEdge(state, PLAYER_1, 0));
+    EXPECT_TRUE(ownsConnectedToEdge(state, PLAYER_2, kBoardHeight - 1));
   }
 
   TEST_F(FooTest, MaxMovesLimitIsHonored) {
@@ -264,6 +307,29 @@ namespace {
     state.make_move(moves[0]);
 
     EXPECT_EQ(state.hash(), state.computeHashFromState());
+  }
+
+  TEST_F(FooTest, EquivalentLegalWordIdsMatchWordLookupRange) {
+    std::istringstream dictionaryFileContents(
+      std::string("gram\n")
+      + "glam\n"
+      + "glamor\n"
+      + "glamorizes\n"
+      + "glass\n");
+    WordDictionary wd(dictionaryFileContents);
+    BoardStatic board(kReadmeBoard, wd);
+
+    for (int legalWordId = 0; legalWordId < board.getLegalWordsSize(); legalWordId++) {
+      std::vector<LegalWordId> fromRange;
+      const std::string& word = board.getLegalWord(legalWordId).mWord;
+      const std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> range =
+        board.getLegalWordIds(word);
+      for (auto i = range.first; i != range.second; ++i) {
+        fromRange.push_back(i->second);
+      }
+
+      EXPECT_EQ(board.getEquivalentLegalWordIds(legalWordId), fromRange);
+    }
   }
 
   TEST_F(FooTest, WordBaseStateHashTracksPlayerAndPlayedWords) {

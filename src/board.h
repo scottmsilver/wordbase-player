@@ -85,6 +85,9 @@ class LegalWordFactory {
   // Maps renumbered maximizer value to a LegalWord.
   std::vector<LegalWordId> mRenumberedMaximizerValueToLegalWord;
 
+  // For each legal word id, store all legal word ids with the same text.
+  std::vector<std::vector<LegalWordId> > mEquivalentWordIds;
+
 public:
   LegalWordFactory() : mNextId(0) { }
   
@@ -101,6 +104,7 @@ public:
     std::shared_ptr<LegalWord> legalWord(new LegalWord({mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness, 0, 0}));
     
     mLegalWordMap.resize(legalWord->mId + 1);
+    mEquivalentWordIds.resize(legalWord->mId + 1);
     mLegalWordMap[legalWord->mId] = legalWord;
     mCoordinateListMap.insert(std::pair<CoordinateList, std::shared_ptr<LegalWord>>(wordSequence, legalWord));
     mWordToLegalWordIds.insert(std::pair<std::string, LegalWordId>(word, legalWord->mId));
@@ -121,6 +125,27 @@ public:
   // FIX-ME(ssilver): We should be returning const ranges.
   std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
     return mWordToLegalWordIds.equal_range(word);
+  }
+
+  void finalizeEquivalentWordIds() {
+    for (auto i = mWordToLegalWordIds.begin(); i != mWordToLegalWordIds.end();) {
+      const std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> sameWordRange =
+        mWordToLegalWordIds.equal_range(i->first);
+
+      std::vector<LegalWordId> equivalentIds;
+      for (auto j = sameWordRange.first; j != sameWordRange.second; ++j) {
+        equivalentIds.push_back(j->second);
+      }
+      for (auto legalWordId : equivalentIds) {
+        mEquivalentWordIds[legalWordId] = equivalentIds;
+      }
+
+      i = sameWordRange.second;
+    }
+  }
+
+  const std::vector<LegalWordId>& getEquivalentWordIds(LegalWordId id) const {
+    return mEquivalentWordIds[id];
   }
   
   // Returns the LegalWord associated at coordinateList or throws.
@@ -272,6 +297,7 @@ public:
     }
     
     findLegalWordsForGrid();
+    mLegalWordFactory.finalizeEquivalentWordIds();
     mLegalWordFactory.renumberByGoodness();
     
     for (int y = 0; y < kBoardHeight; y++) {
@@ -302,6 +328,10 @@ public:
   // Return the beginning and end of range of all LegalWordIds with this same word.
   std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
     return mLegalWordFactory.getLegalWordIds(word);
+  }
+
+  const std::vector<LegalWordId>& getEquivalentLegalWordIds(LegalWordId legalWordId) const {
+    return mLegalWordFactory.getEquivalentWordIds(legalWordId);
   }
   
   // Return the word represented by the passed in sequence.

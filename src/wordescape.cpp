@@ -429,9 +429,9 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
     
     // Mark this word as played.
-    std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(mBoard->getLegalWordIds(mBoard->getLegalWord(move.mLegalWordId).mWord));
-    for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
-      setPlayedWord(i->second, true);
+    const std::vector<LegalWordId>& equivalentWordIds = mBoard->getEquivalentLegalWordIds(move.mLegalWordId);
+    for (auto legalWordId : equivalentWordIds) {
+      setPlayedWord(legalWordId, true);
     }
   }
   
@@ -447,11 +447,11 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
-    
+
     char visitedOwner = mState.get(y, x);
     if ((visitedOwner & 0x8) == 0 && owner == visitedOwner) {
       setCellState(y, x, visitedOwner | 0x8);
-      
+
       markConnected(y - 1, x - 1, owner);
       markConnected(y - 1, x, owner);
       markConnected(y - 1, x + 1, owner);
@@ -470,7 +470,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         char owner = mState.get(y, x);
-        
+
         if (owner & 0x8) {
           setCellState(y, x, owner & 0x7);
         } else if (owner == PLAYER_BOMB || owner == PLAYER_MEGABOMB) {
@@ -486,7 +486,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   void make_move(const WordBaseMove& move) override {
     // Make the move.
     recordMove(move);
-    
+
     // Mark from all possible roots; the two sides of the board.
     for (int y : {0, kBoardHeight - 1}) {
       for (int x = 0; x < kBoardWidth; x++) {

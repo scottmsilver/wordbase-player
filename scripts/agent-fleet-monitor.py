@@ -39,9 +39,6 @@ class WorkerInfo:
     latest_activity_age_seconds: Optional[int]
     display_state: str
     codex: ProcessInfo
-    recent_profile_nodes: List[int]
-    baseline_profile_nodes: Optional[int]
-    profile_trend: str
 
 
 def run_cmd(args: List[str], cwd: Optional[Path] = None) -> str:
@@ -157,58 +154,6 @@ def read_benchmark_rows(csv_path: Path) -> Tuple[str, str]:
     return latest_kept, latest_discarded
 
 
-def read_recent_profile_nodes(csv_path: Path, count: int = 4) -> List[int]:
-    if not csv_path.exists():
-        return []
-    try:
-        with csv_path.open(newline="") as handle:
-            reader = csv.DictReader(handle)
-            rows = [row for row in reader if row.get("scenario") == "profile" and row.get("total_nodes")]
-    except Exception:
-        return []
-    recent = []
-    for row in reversed(rows):
-        try:
-            recent.append(int(row.get("total_nodes", "0")))
-        except ValueError:
-            continue
-        if len(recent) >= count:
-            break
-    return list(reversed(recent))
-
-
-def read_profile_baseline(csv_path: Path) -> Optional[int]:
-    if not csv_path.exists():
-        return None
-    try:
-        with csv_path.open(newline="") as handle:
-            reader = csv.DictReader(handle)
-            rows = [row for row in reader if row.get("scenario") == "profile" and row.get("status") == "kept" and row.get("total_nodes")]
-    except Exception:
-        return None
-    for row in reversed(rows):
-        try:
-            return int(row.get("total_nodes", "0"))
-        except ValueError:
-            continue
-    return None
-
-
-def render_trend(values: List[int]) -> str:
-    if not values:
-        return "-"
-    chars = " .:-=+*#"
-    vmin = min(values)
-    vmax = max(values)
-    if vmax == vmin:
-        return chars[-1] * len(values)
-    out = []
-    for value in values:
-        idx = int(round((value - vmin) / (vmax - vmin) * (len(chars) - 1)))
-        out.append(chars[idx])
-    return "".join(out)
-
-
 def latest_activity_line(worker_name: str) -> Tuple[str, Optional[int]]:
     log_path = FLEET_DIR / f"{worker_name}-launcher.log"
     if not log_path.exists():
@@ -259,11 +204,7 @@ def worker_infos() -> List[WorkerInfo]:
         current_task, current_task_state = latest_task_for_worker(name)
         latest_activity, latest_activity_age_seconds = latest_activity_line(name)
         codex = find_codex_process(worktree)
-        bench_path = worktree / "benchmark-progress.csv"
-        kept, discarded = read_benchmark_rows(bench_path)
-        recent_profile = read_recent_profile_nodes(bench_path)
-        baseline_profile = read_profile_baseline(bench_path)
-        trend = render_trend(recent_profile)
+        kept, discarded = read_benchmark_rows(worktree / "benchmark-progress.csv")
         workers.append(
             WorkerInfo(
                 name=name,
@@ -278,9 +219,6 @@ def worker_infos() -> List[WorkerInfo]:
                 latest_activity_age_seconds=latest_activity_age_seconds,
                 display_state=worker_display_state(current_task_state, codex, latest_activity_age_seconds),
                 codex=codex,
-                recent_profile_nodes=recent_profile,
-                baseline_profile_nodes=baseline_profile,
-                profile_trend=trend,
             )
         )
     return workers
@@ -403,19 +341,13 @@ def draw_screen(stdscr, interval: float) -> None:
         for worker in workers:
             state = worker.display_state
             state_text = f"{state} {spinner}" if state in ("active", "handoff") else state
-        lines.append((
-            f"{worker.name:<10} {state_text:<9} {format_age(worker.latest_activity_age_seconds):<4} "
-            f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
-            f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}",
-            color_pair_for_state(state),
-        ))
-        trend = worker.profile_trend
-        if worker.baseline_profile_nodes:
-            trend = f"{trend} base={worker.baseline_profile_nodes}"
-        if worker.recent_profile_nodes:
-            trend = f"{trend} last={worker.recent_profile_nodes[-1]}"
-        lines.append((f"  trend: {trend}", 0))
-        lines.append((f"  activity: {worker.latest_activity}", 0))
+            lines.append((
+                f"{worker.name:<10} {state_text:<9} {format_age(worker.latest_activity_age_seconds):<4} "
+                f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
+                f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}",
+                color_pair_for_state(state),
+            ))
+            lines.append((f"  activity: {worker.latest_activity}", 0))
 
         lines.append(("", 0))
         lines.append(("Legend: green=active, yellow=handoff/planning, cyan=done, red=stalled/failed", 0))

@@ -76,18 +76,6 @@ The current intended meanings are:
 
 The suite is deterministic on purpose. We keep one fixed-board benchmark for tight A/B comparisons, then use the checked-in suite in [benchmark-board-suite.txt](/home/ssilver/development/wordbase-player/scripts/benchmark-board-suite.txt) to make sure a change generalizes beyond the README board.
 
-To generate self-play data for ML experiments, `perf-test` has a JSONL self-play mode:
-
-```bash
-./build-release/perf-test ./src/twl06_with_wordbase_additions.txt \
-  --selfplay-games 10 \
-  --selfplay-out /tmp/wordbase-selfplay.jsonl \
-  --max-turns 80 \
-  --seconds 0.05
-```
-
-Each JSONL line contains either a `move` record (board text, owner grid, move word/path, search stats) or a `summary` record with the final winner.
-
 Agent Loop
 
 To keep Codex iterating without manually re-prompting every turn, use:

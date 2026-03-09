@@ -12,6 +12,7 @@ MODEL=""
 MASTER_MODEL=""
 BASE_REF="origin/master"
 ENABLE_SEARCH=0
+FRESH_WORKTREES=1
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Options:
   --master-model <name>  Model for the master planner
   --base-ref <ref>       Base ref for worker branches (default: origin/master)
   --search               Enable web search for master and workers
+  --reuse-worktrees      Reuse existing worktrees instead of recreating them
   --help                 Show this help
 EOF
 }
@@ -49,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --search)
       ENABLE_SEARCH=1
+      shift
+      ;;
+    --reuse-worktrees)
+      FRESH_WORKTREES=0
       shift
       ;;
     --help|-h)
@@ -115,6 +121,11 @@ launch_worker() {
   local branch_name="agent-fleet/$worker_name"
   local worker_log="$ROOT_DIR/logs/agent-fleet/${worker_name}-launcher.log"
 
+  if [[ "$FRESH_WORKTREES" -eq 1 && -d "$worktree_path" ]]; then
+    git worktree remove -f "$worktree_path" >/dev/null 2>&1 || true
+    rm -rf "$worktree_path"
+  fi
+
   if [[ ! -d "$worktree_path/.git" && ! -f "$worktree_path/.git" ]]; then
     git_with_retry git worktree add -B "$branch_name" "$worktree_path" "$BASE_REF"
   fi
@@ -133,6 +144,7 @@ launch_worker() {
     --state-subdir "$worker_name"
     --benchmark-log "$worktree_path/logs/agent-loop/$worker_name/benchmark-progress.csv"
     --task-dir "$TASK_ROOT"
+    --require-task
   )
 
   if [[ -n "$MODEL" ]]; then

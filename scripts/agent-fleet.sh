@@ -84,12 +84,18 @@ launch_master() {
 launch_worker() {
   local worker_name="$1"
   local worktree_path="$WORKTREE_ROOT/$worker_name"
-  local branch_name="agent/$worker_name"
+  local branch_name="agent-fleet/$worker_name"
   local worker_log="$ROOT_DIR/logs/agent-fleet/${worker_name}-launcher.log"
 
   if [[ ! -d "$worktree_path/.git" && ! -f "$worktree_path/.git" ]]; then
     git worktree add -B "$branch_name" "$worktree_path" "$BASE_REF"
   fi
+
+  git -C "$worktree_path" fetch origin >/dev/null 2>&1 || true
+  git -C "$worktree_path" checkout -B "$branch_name" "$BASE_REF" >/dev/null
+  git -C "$worktree_path" submodule update --init --recursive >/dev/null
+  cmake -S "$worktree_path/src" -B "$worktree_path/build-release" -DCMAKE_BUILD_TYPE=Release >/dev/null
+  cmake --build "$worktree_path/build-release" --target perf-test -j4 >/dev/null
 
   local cmd=(
     "$worktree_path/scripts/agent-loop.sh"

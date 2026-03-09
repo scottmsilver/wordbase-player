@@ -115,6 +115,14 @@ Check fleet status with:
 ./scripts/agent-fleet-status.sh
 ```
 
+For a live terminal monitor, use:
+
+```bash
+./scripts/agent-fleet-monitor.py
+```
+
+It refreshes continuously and shows queue counts, worker branches, current tasks, latest kept/discarded benchmark rows, and the most recent activity line per worker. Press `q` to quit.
+
 This starts:
 - one planning master that writes concrete experiment tasks under `logs/agent-fleet/tasks/pending`
 - multiple workers in isolated git worktrees under `.codex-workers/`

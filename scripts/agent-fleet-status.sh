@@ -46,6 +46,31 @@ process_status() {
   fi
 }
 
+codex_process_status() {
+  local label="$1"
+  local workspace="$2"
+  local pid
+  pid="$(
+    pgrep -af 'codex exec -C ' \
+      | awk -v workspace="$workspace" '
+          {
+            for (i = 1; i <= NF; ++i) {
+              if ($i == "-C" && (i + 1) <= NF && $(i + 1) == workspace) {
+                print $1;
+                exit;
+              }
+            }
+          }
+        ' || true
+  )"
+  if [[ -n "$pid" ]]; then
+    local stat cmd
+    stat="$(ps -p "$pid" -o stat= | xargs)"
+    cmd="$(ps -p "$pid" -o cmd= | sed -E 's/[[:space:]]+/ /g' | cut -c1-120)"
+    printf '%-12s active pid=%s stat=%s cmd=%s\n' "$label" "$pid" "$stat" "$cmd"
+  fi
+}
+
 count_files() {
   local dir="$1"
   if [[ -d "$dir" ]]; then
@@ -64,6 +89,7 @@ latest_file() {
 
 echo "Fleet"
 process_status "$PID_DIR/master.pid" "master"
+codex_process_status "master-job" "$ROOT_DIR"
 if [[ -d "$PID_DIR" ]]; then
   while IFS= read -r pid_file; do
     base="$(basename "$pid_file")"
@@ -72,6 +98,7 @@ if [[ -d "$PID_DIR" ]]; then
     fi
     worker="${base%.pid}"
     process_status "$pid_file" "$worker"
+    codex_process_status "${worker}-job" "$WORKTREE_ROOT/$worker"
   done < <(find "$PID_DIR" -maxdepth 1 -name 'worker-*.pid' | sort)
 fi
 

@@ -38,8 +38,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+option(WORDBASE_USE_TORCH "Enable LibTorch neural evaluation" OFF)
+
 find_package(Boost 1.45 REQUIRED COMPONENTS timer)
 find_package(OpenSSL REQUIRED)
+
+if (WORDBASE_USE_TORCH)
+  find_package(Torch REQUIRED)
+  set(CMAKE_CXX_STANDARD 17)
+  message(STATUS "LibTorch enabled: ${TORCH_LIBRARIES}")
+endif()
 
 find_path(WORDBASE_SQLITE3_INCLUDE_DIR
   NAMES sqlite3.h
@@ -93,6 +101,10 @@ add_executable(perf-test perf-test.cpp obstack/obstack.cpp)
 target_compile_definitions(perf-test PRIVATE HAS_BOOST)
 target_include_directories(perf-test PRIVATE ${Boost_INCLUDE_DIRS})
 target_link_libraries(perf-test PRIVATE ${Boost_LIBRARIES})
+if (WORDBASE_USE_TORCH)
+  target_compile_definitions(perf-test PRIVATE HAS_TORCH)
+  target_link_libraries(perf-test PRIVATE ${TORCH_LIBRARIES})
+endif()
 
 add_executable(decrypt decrypt.cpp)
 target_include_directories(decrypt PRIVATE

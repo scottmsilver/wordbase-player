@@ -9,6 +9,10 @@
 #include "word-dictionary.h"
 #include "wordescape.cpp"
 
+#ifdef HAS_TORCH
+#include "neural-eval.h"
+#endif
+
 INITIALIZE_EASYLOGGINGPP
 
 namespace {
@@ -30,6 +34,7 @@ struct PerfOptions {
   std::string selfplayOutPath;
   bool useTranspositionTable = true;
   bool printBoards = false;
+  std::string neuralModelPath;
 };
 
 struct AggregateStats {
@@ -72,7 +77,11 @@ void printUsage(const char* argv0) {
     << "  --selfplay-games <n>     Play N self-play games and emit JSONL (default 0)\n"
     << "  --selfplay-out <path>    Write self-play JSONL to this file\n"
     << "  --no-tt                  Disable the transposition table\n"
-    << "  --print-boards           Print the board after each move\n";
+    << "  --print-boards           Print the board after each move\n"
+#ifdef HAS_TORCH
+    << "  --neural-model <path>    Use neural network for leaf evaluation\n"
+#endif
+    ;
 }
 
 PerfOptions parseArgs(int argc, char** argv) {
@@ -103,6 +112,8 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.selfplayGames = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--selfplay-out" && index < argc) {
       options.selfplayOutPath = argv[index++];
+    } else if (arg == "--neural-model" && index < argc) {
+      options.neuralModelPath = argv[index++];
     } else if (arg == "--no-tt") {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
@@ -234,11 +245,51 @@ int main(int argc, char** argv) {
     BoardStatic board(options.boardText, dictionary);
     WordBaseState state(&board, PLAYER_1);
 
-    auto makeAlgorithm = [&options]() {
+#ifdef HAS_TORCH
+    std::unique_ptr<NeuralEvaluator> neuralEval;
+    if (!options.neuralModelPath.empty()) {
+      neuralEval = std::make_unique<NeuralEvaluator>(options.neuralModelPath);
+      if (!neuralEval->isLoaded()) {
+        throw std::runtime_error("Failed to load neural model: " + options.neuralModelPath);
+      }
+      std::cout << "neural_eval loaded=" << options.neuralModelPath
+                << " gpu=" << (neuralEval->isGPU() ? "true" : "false") << std::endl;
+      // GPU warmup: run multiple forward passes to fully initialize CUDA kernels
+      neuralEval->warmup(state);
+    }
+#endif
+
+    auto makeAlgorithm = [&options
+#ifdef HAS_TORCH
+                          , &neuralEval
+#endif
+                          ]() {
       Minimax<WordBaseState, WordBaseMove> algorithm(options.maxSecondsPerMove, options.maxMovesPerPosition);
       algorithm.setMaxDepth(options.maxDepth);
       algorithm.setUseTranspositionTable(options.useTranspositionTable);
       algorithm.setTraceStream(nullptr);
+#ifdef HAS_TORCH
+      if (neuralEval) {
+        NeuralEvaluator* evalPtr = neuralEval.get();
+        algorithm.setMoveReorderer([evalPtr](WordBaseState* state, std::vector<WordBaseMove>& moves) {
+          // Single forward pass: use policy logits to score all moves
+          auto scores = evalPtr->policyScoreMoves(*state, moves);
+          // Sort all moves by policy score (highest first)
+          std::vector<std::pair<int, size_t>> scored(moves.size());
+          for (size_t i = 0; i < moves.size(); i++) {
+            scored[i] = {scores[i], i};
+          }
+          std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+          });
+          std::vector<WordBaseMove> reordered(moves.size());
+          for (size_t i = 0; i < moves.size(); i++) {
+            reordered[i] = moves[scored[i].second];
+          }
+          moves = std::move(reordered);
+        });
+      }
+#endif
       return algorithm;
     };
 

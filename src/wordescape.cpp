@@ -1,17 +1,17 @@
 /*
  wordescape.cpp
  Copyright (C) 2016 Scott Silver.
- 
+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 3 of the License, or
  (at your option) any later version.
- 
+
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  GNU General Public License for more details.
- 
+
  You should have received a copy of the GNU General Public License
  along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
@@ -56,7 +56,7 @@ class WordBaseGridState : public Grid<char, kBoardHeight, kBoardWidth> {
 public:
   // Initialize GridState by copying the underlying contents.
   WordBaseGridState(const WordBaseGridState& state) : Grid<char, kBoardHeight, kBoardWidth>(state) {}
-  
+
   // Initialize GridState to an unused board.
   WordBaseGridState() : Grid() {
     fill(kOwnerUnowned);
@@ -71,20 +71,20 @@ public:
 struct Goodness {
   const BoardStatic& mBoard;
   char mPlayerToMove;
-  
+
   Goodness(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
-  
+
   // Return true if the i is a better more than j.
   bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
     // FIX-ME this is suspect. Why does > give better values than <
     return heuristicValue(i) > heuristicValue(j);
   }
-  
+
   // Return the heuristic value (aka Goodness) of this move.
   int heuristicValue(const WordBaseMove& x) const {
     return (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mMinimizerGoodness;
   }
-  
+
   // Used in conjunction with spreadsort. Right shift the value. See spreadshort for documentation.
   inline int operator()(const WordBaseMove & x, unsigned offset) const {
     return heuristicValue(x) >> offset;
@@ -95,19 +95,19 @@ struct Goodness {
 struct Goodness2 {
   const BoardStatic& mBoard;
   char mPlayerToMove;
-  
+
   Goodness2(const BoardStatic& board, char playerToMove) : mBoard(board), mPlayerToMove(playerToMove) {}
-  
+
   // Return true if the i is a better more than j.
   bool operator()(const WordBaseMove& i, const WordBaseMove& j) const {
     return heuristicValue(i) < heuristicValue(j);
   }
-  
+
   // Return the heuristic value (aka Goodness) of this move.
   int heuristicValue(const WordBaseMove& x) const {
     return (mPlayerToMove == PLAYER_1) ? mBoard.getLegalWord(x.mLegalWordId).mRenumberedMaximizerGoodness : mBoard.getLegalWord(x.mLegalWordId).mRenumberedMinimizerGoodness;
   }
-  
+
   // Used in conjunction with spreadsort. Right shift the value. See spreadshort for documentation.
   inline int operator()(const WordBaseMove & x, unsigned offset) const {
     return heuristicValue(x) >> offset;
@@ -122,7 +122,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   std::vector<bool> mPlayedWords;
   size_t mHashValue;
   uint64_t mTtVerificationKey;
-  
+
   WordBaseState(BoardStatic* board, char playerToMove)
     : State<WordBaseState, WordBaseMove>(playerToMove),
       mBoard(board),
@@ -134,18 +134,21 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     mHashValue = computeHashFromState();
     mTtVerificationKey = computeVerificationKeyFromState();
   }
-  
+
   // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
   mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey) {
   }
-  
+
   WordBaseState clone() const override {
     return WordBaseState(*this);
   }
-  
+
+  const WordBaseGridState& getGridState() const { return mState; }
+  const BoardStatic& getBoardStatic() const { return *mBoard; }
+
   // Place bombs at each point in the supplied sequence.
   void putBomb(CoordinateList sequence, bool megaBomb) {
     for (auto&& bombPlace : sequence) {
@@ -261,12 +264,12 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
     return seed;
   }
-  
+
   // Return the value of this board state from the perspective of the given player.
   // In other words, it should be positive if player_to_move has an advantage.
   int get_goodness() const override {
     int h = 0;
-    
+
     // First look for the terminal conditions.
     // FIX-ME combine this with is_terminal, with one that can say which player was terminal.
     for (int x = 0; x < kBoardWidth; x++) {
@@ -274,7 +277,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         h = -INF;
         break;
       }
-      
+
       if (mState.get(kBoardHeight - 1, x) == PLAYER_1) {
         assert(h != -INF);
         h = INF;
@@ -295,18 +298,18 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         }
       }
     }
-    
+
     int color = player_to_move == PLAYER_1 ? 1 : -1;
-    
+
     return h * color;
   }
-  
+
   // Return all the legal moves from this current state, only consider a maximum
   // of max_moves moves.
   std::vector<WordBaseMove> get_legal_moves(int max_moves = INF) const override {
     return get_legal_moves2(max_moves, NULL);
   }
-  
+
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
   // filter must exactly match the found move, keeping in mind that the same
@@ -316,7 +319,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // Maintain an ordered set, ordered by "goodness" which is a heuristic for whether
     // we think the move is likely to be very good.
     std::vector<WordBaseMove> moves;
-    
+
     // For each letter owned by the current player find candidate words and filter
     // them appropriately.
     for (int y = 0; y < kBoardHeight; y++) {
@@ -334,7 +337,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         }
       }
     }
-    
+
     // Sort moves in order of Goodness. NB: This is probably the slowest part in traversing to the next
     // ply. So we have tried to heavily optimize this sort.
     boost::sort::spreadsort::integer_sort(moves.begin(), moves.end(), Goodness(*mBoard, player_to_move), Goodness(*mBoard, player_to_move));
@@ -342,10 +345,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     if (max_moves != INF && moves.size() > static_cast<size_t>(max_moves)) {
       moves.resize(max_moves);
     }
-    
+
     return moves;
   }
-  
+
   // Return a list of legal moves filtered by an optional filter and sorted
   // by most likely to be the "best" move.
   // filter must exactly match the found move, keeping in mind that the same
@@ -390,7 +393,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         }
       }
     }
-    
+
     moves.resize(moveIndex);
     return moves;
   }
@@ -398,22 +401,22 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   char get_enemy(char player) const override {
     return (player == PLAYER_1) ? PLAYER_2 : PLAYER_1;
   }
-  
+
   bool is_terminal() const override {
     for (int x = 0; x < kBoardWidth; x++) {
       if (mState.get(0, x) == PLAYER_2) {
         return true;
       }
-      
+
       if (mState.get(kBoardHeight - 1, x) == PLAYER_1) {
         return true;
       }
     }
-    
+
     // FIX-ME probably need to handle case where there are no more moves to make.
     return false;
   }
-  
+
   // FIX-ME combine with a combined is_terminal.
   bool is_winner(char player) const override {
     for (int x = 0; x < kBoardWidth; x++) {
@@ -425,22 +428,22 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         }
       }
     }
-    
+
     return false;
   }
-  
+
   // Record the claiming of a single grid square.
   // Deal with the impacts of bombs by recursing, as appropriate.
   void recordOne(int y, int x) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
-    
+
     bool hadBomb = (mState.get(y, x) == PLAYER_BOMB);
     bool hadMegabomb = (mState.get(y, x) == PLAYER_MEGABOMB);
-    
+
     setCellState(y, x, player_to_move);
-    
+
     // A bomb causes the player to get the grid squares North, South, East and
     // West of this grid square.
     if (hadBomb) {
@@ -459,27 +462,36 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       recordOne(y + 1, x - 1);
     }
   }
-  
+
+  // Check whether a move is valid for the current player.
+  bool isValidMove(const WordBaseMove& move) const override {
+    if (move.mLegalWordId < 0 || move.mLegalWordId >= static_cast<int>(mPlayedWords.size())) {
+      return false;
+    }
+    if (mPlayedWords[move.mLegalWordId]) {
+      return false;
+    }
+    const CoordinateList& ws = mBoard->getLegalWord(move.mLegalWordId).mWordSequence;
+    return !ws.empty() && mState.get(ws[0].first, ws[0].second) == player_to_move;
+  }
+
   // Record a single move in the game. Iterates through each grid square, claiming that square.
   void recordMove(const WordBaseMove& move) {
-    // The first letter of the word must be owend by the current player.
+    assert(isValidMove(move));
     const CoordinateList& wordSequence = mBoard->getLegalWord(move.mLegalWordId).mWordSequence;
-    if (wordSequence.size() > 0) {
-      assert(mState.get(wordSequence[0].first, wordSequence[0].second) == player_to_move);
-    }
-    
+
     // Record each letter.
     for (const auto& pathElement : wordSequence) {
       recordOne(pathElement.first, pathElement.second);
     }
-    
+
     // Mark this word as played.
     const std::vector<LegalWordId>& equivalentWordIds = mBoard->getEquivalentLegalWordIds(move.mLegalWordId);
     for (auto legalWordId : equivalentWordIds) {
       setPlayedWord(legalWordId, true);
     }
   }
-  
+
   // Starting at (y, x) mark all grid squares that are connected to (y, x).
   // A grid square is connected to (y, x) if it is eventually connected to (y, x) through
   // any path and has the same owner as (y, x).
@@ -521,7 +533,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       }
     }
   }
-  
+
   // Clear any square not connected after a call to markConnected().
   // This has the impact of removing ownership of a square that was
   // previously owned.
@@ -541,7 +553,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       }
     }
   }
-  
+
   // Make a move, change the current player to the other after doing this.
   void make_move(const WordBaseMove& move) override {
     // Make the move.
@@ -553,22 +565,22 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         markConnected(y, x, mState.get(y, x));
       }
     }
-    
+
     // Clear out any that we didn't reach (as in the move we made cut off another person's line)
     clearNotConnected();
-    
+
     // Change to the new player.
     setPlayerToMove(get_enemy(player_to_move));
   }
-  
+
   std::ostream &to_stream(std::ostream &os) const override {
     return os;
   }
-  
+
   bool operator==(const WordBaseState &other) const override {
     return player_to_move == other.player_to_move && mState == other.mState && mPlayedWords == other.mPlayedWords;
   }
-  
+
   size_t hash() const override {
     return mHashValue;
   }
@@ -576,19 +588,19 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   uint64_t tt_verification_key() const override {
     return mTtVerificationKey;
   }
-  
+
   const std::vector<std::string> getAlreadyPlayed() const {
     std::vector<std::string> alreadyPlayed;
-    
+
     for (int curId = 0; curId < mPlayedWords.size(); curId++) {
       if (mPlayedWords[curId]) {
         alreadyPlayed.push_back(mBoard->getLegalWord(curId).mWord);
       }
     }
-    
+
     return alreadyPlayed;
   }
-  
+
   // Add words to the already played this; this is used for testing
   // or for joining games already in progress.
   void addAlreadyPlayed(const std::string& alreadyPlayed) {
@@ -607,11 +619,11 @@ std::ostream& operator<<(std::ostream& os, const CoordinateList& foo) {
     if (!first) {
       os << ",";
     }
-    
+
     os << "(" << sequenceElement.first << "," << sequenceElement.second << ")";
     first = false;
   }
-  
+
   return os;
 }
 
@@ -629,7 +641,7 @@ std::ostream& operator<<(std::ostream& os, const BoardStatic & foo) {
 // Return a character representing the owned state of a square.
 char ownerText(char owner) {
   char ownerText;
-  
+
   switch (owner) {
     case PLAYER_1:
     case PLAYER_2:
@@ -647,21 +659,21 @@ char ownerText(char owner) {
     default:
       ownerText = '?';
   }
-  
+
   return ownerText;
 }
 
 // Print out the a WordBaseState.
 std::ostream& operator<<(std::ostream& os, const WordBaseState& foo) {
   os << boost::format("player(%d): h=%d") % int(foo.player_to_move) % foo.get_goodness() << std::endl;
-  
+
   os << "  ";
   for (int x = 0; x < kBoardWidth; x++) {
     os << boost::format("%2d") % x;
   }
-  
+
   os << std::endl;
-  
+
   for (int y = 0; y < kBoardHeight; y++) {
     os << boost::format("%2d") % y;
     for (int x = 0; x < kBoardWidth; x++) {
@@ -674,6 +686,6 @@ std::ostream& operator<<(std::ostream& os, const WordBaseState& foo) {
     }
     os << std::endl;
   }
-  
+
   return os;
 }

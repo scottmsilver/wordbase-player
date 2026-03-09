@@ -1,17 +1,17 @@
 /*
  Game Tree Search Algorithms
  Copyright (C) 2015-2016  Adam Stelmaszczyk <stelmaszczyk.adam@gmail.com>
- 
+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 3 of the License, or
  (at your option) any later version.
- 
+
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  GNU General Public License for more details.
- 
+
  You should have received a copy of the GNU General Public License
  along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
@@ -43,9 +43,9 @@ static const int INF = 2147483647;
 
 struct Random {
   std::mt19937 engine;
-  
+
   virtual ~Random() {}
-  
+
   int uniform(int min, int max) {
     return std::uniform_int_distribution<int>{min, max}(engine);
   }
@@ -53,27 +53,27 @@ struct Random {
 
 struct Timer {
   double start_time;
-  
+
   virtual ~Timer() {}
-  
+
   void start() {
     start_time = get_time();
   }
-  
+
   double get_time() const {
     timeval tv;
     gettimeofday(&tv, 0);
     return tv.tv_sec + tv.tv_usec * 1e-6;
   }
-  
+
   double seconds_elapsed() const {
     return get_time() - start_time;
   }
-  
+
   bool exceeded(double seconds) const {
     return seconds_elapsed() > seconds;
   }
-  
+
   friend std::ostream &operator<<(std::ostream &os, const Timer &timer) {
     return os << std::setprecision(2) << std::fixed << timer.seconds_elapsed() << "s";
   }
@@ -82,17 +82,17 @@ struct Timer {
 template<class M>
 struct Move {
   virtual ~Move() {}
-  
+
   virtual void read() = 0;
-  
+
   virtual std::ostream &to_stream(std::ostream &os) const = 0;
-  
+
   friend std::ostream &operator<<(std::ostream &os, const Move &move) {
     return move.to_stream(os);
   }
-  
+
   virtual bool operator==(const M &rhs) const = 0;
-  
+
   virtual size_t hash() const = 0;
 };
 
@@ -105,18 +105,18 @@ struct TTEntry {
   int depth;
   int value;
   TTEntryType value_type;
-  
+
   TTEntry() {}
-  
+
   virtual ~TTEntry() {}
-  
+
   TTEntry(const M &move, uint64_t verification_key, int depth, int value, TTEntryType value_type) :
   move(move), verification_key(verification_key), depth(depth), value(value), value_type(value_type) {}
-  
+
  std::ostream &to_stream(std::ostream &os) {
 	    return os << "move: " << move << " verification_key: " << verification_key << " depth: " << depth << " value: " << value << " value_type: " << value_type;
   }
-  
+
   friend std::ostream &operator<<(std::ostream &os, const TTEntry &entry) {
     return entry.to_stream(os);
   }
@@ -130,16 +130,16 @@ struct State {
   char player_to_move = 0;
   S *parent = nullptr;
   std::unordered_map<size_t, std::shared_ptr<S>> children = std::unordered_map<size_t, std::shared_ptr<S>>();
-  
+
   State(char player_to_move) : player_to_move(player_to_move) {}
-  
+
   virtual ~State() {}
-  
+
   void update_stats(double result) {
     score += result;
     ++visits;
   }
-  
+
   double get_uct(double c) const {
     assert(visits > 0);
     double parent_visits = 0.0;
@@ -148,14 +148,14 @@ struct State {
     }
     return (score / visits) + c * sqrt(log(parent_visits) / visits);
   }
-  
+
   std::shared_ptr<S> create_child(M &move) {
     S child = clone();
     child.make_move(move);
     child.parent = (S*) this;
     return std::make_shared<S>(child);
   }
-  
+
   S* add_child(M &move) {
     auto child = create_child(move);
     auto key = move.hash();
@@ -163,7 +163,7 @@ struct State {
     auto it = pair.first;
     return it->second.get();
   }
-  
+
   S* get_child(M &move) {
     auto key = move.hash();
     auto it = children.find(key);
@@ -172,31 +172,36 @@ struct State {
     }
     return it->second.get();
   }
-  
+
   virtual void swap_players() {}
-  
+
   virtual S clone() const = 0;
-  
+
   virtual int get_goodness() const = 0;
-  
+
   virtual std::vector<M> get_legal_moves(int max_moves) const = 0;
-  
+
   virtual char get_enemy(char player) const = 0;
-  
+
   virtual bool is_terminal() const = 0;
-  
+
   virtual bool is_winner(char player) const = 0;
-  
+
   virtual void make_move(const M &move) = 0;
-  
+
+  // Check whether a move is valid for the current player.
+  // Used to validate transposition table entries against hash collisions.
+  // Default returns true; override in game-specific subclasses.
+  virtual bool isValidMove(const M &) const { return true; }
+
   virtual std::ostream &to_stream(std::ostream &os) const = 0;
-  
+
   friend std::ostream &operator<<(std::ostream &os, const State &state) {
     return state.to_stream(os);
   }
-  
+
   virtual bool operator==(const S &other) const = 0;
-  
+
   virtual size_t hash() const = 0;
 
   virtual uint64_t tt_verification_key() const {
@@ -207,21 +212,21 @@ struct State {
 template<class S, class M>
 struct Algorithm {
   Algorithm() { }
-  
+
   Algorithm(const Algorithm& algorithm) {}
-  
+
   virtual ~Algorithm() {}
-  
+
   virtual void reset() {}
-  
+
   virtual M get_move(S *state) = 0;
 
   virtual std::string read_log() const {
     return "";
   }
-  
+
   virtual std::string get_name() const = 0;
-  
+
   friend std::ostream &operator<<(std::ostream &os, const Algorithm &algorithm) {
     os << algorithm.get_name();
     return os;
@@ -231,7 +236,7 @@ struct Algorithm {
 template<class S, class M>
 struct Human : public Algorithm<S, M> {
   Human() : Algorithm<S, M>() {}
-  
+
   M get_move(S *state) override {
     const std::vector<M> &legal_moves = state->get_legal_moves();
     if (legal_moves.empty()) {
@@ -249,7 +254,7 @@ struct Human : public Algorithm<S, M> {
       }
     }
   }
-  
+
   std::string get_name() const {
     return "Human";
   }
@@ -351,7 +356,10 @@ struct Minimax : public Algorithm<S, M> {
   bool mUseTranspositionTable;
   std::ostream* mTraceStream;
   SearchStats mLastSearchStats;
-  
+  std::function<void(S*, std::vector<M>&)> mMoveReorderer;
+  std::vector<M> mCachedRootMoves;
+  bool mHasCachedRootMoves = false;
+
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
   transposition_table(std::unordered_map<size_t, TTEntry<M>>(1000000)),
@@ -360,19 +368,19 @@ struct Minimax : public Algorithm<S, M> {
 	  get_goodness(get_goodness),
 	  timer(Timer()),
 	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {}
-  
+
   void reset() override {
     transposition_table.clear();
   }
-  
+
   void setMaxSeconds(double seconds) {
     MAX_SECONDS = seconds;
   }
-  
+
   void setMaxDepth(int depth) {
     mMaxDepth = depth;
   }
-  
+
   void setUseTranspositionTable(bool useTranspositionTable) {
     mUseTranspositionTable = useTranspositionTable;
   }
@@ -384,7 +392,11 @@ struct Minimax : public Algorithm<S, M> {
   const SearchStats& getLastSearchStats() const {
     return mLastSearchStats;
   }
-  
+
+  void setMoveReorderer(std::function<void(S*, std::vector<M>&)> reorderer) {
+    mMoveReorderer = reorderer;
+  }
+
   M get_move(S *state) override {
     if (state->is_terminal()) {
       std::stringstream stream;
@@ -393,6 +405,14 @@ struct Minimax : public Algorithm<S, M> {
     }
     timer.start();
     mLastSearchStats = SearchStats();
+    // Pre-compute neural move ordering for the root, if available.
+    if (mMoveReorderer) {
+      mCachedRootMoves = state->get_legal_moves(MAX_MOVES);
+      mMoveReorderer(state, mCachedRootMoves);
+      mHasCachedRootMoves = true;
+    } else {
+      mHasCachedRootMoves = false;
+    }
     M best_move;
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
       LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
@@ -404,7 +424,7 @@ struct Minimax : public Algorithm<S, M> {
       nodes = 0;
       leafs = 0;
       LOG(DEBUG) << *state << std::endl;
-      
+
       auto result = minimax(state, max_depth, -INF, INF, 0);
       if (result.completed) {
         best_move = result.best_move;
@@ -447,24 +467,31 @@ struct Minimax : public Algorithm<S, M> {
     }
     return best_move;
   }
-  
+
   // Find Minimax value of the given tree,
   // Minimax value lies within a range of [alpha; beta] window.
   // Whenever alpha >= beta, further checks of children in a node can be pruned.
   MinimaxResult<M> minimax(S *state, int depth, int alpha, int beta, int indent) {
     ++nodes;
     const int alpha_original = alpha;
-    
+
     M best_move;
     if (depth == 0 || state->is_terminal()) {
       ++leafs;
       const int goodness = get_goodness ? get_goodness(state) : state->get_goodness();
       return {goodness, best_move, false};
     }
-    
+
     TTEntry<M> entry;
     bool entry_found = get_tt_entry(state, entry);
-    if (mUseTranspositionTable && entry_found && entry.depth >= depth) {
+    // Validate that the stored move is still legal for this position.
+    // Hash/verification collisions or cross-turn TT reuse can produce
+    // entries whose move is invalid for the current state.
+    // If isValidMove becomes a bottleneck, we could restrict this check
+    // to EXACT_VALUE entries only (those skip the search entirely).
+    // Bounds entries with wrong values just cause suboptimal pruning.
+    if (mUseTranspositionTable && entry_found && entry.depth >= depth
+        && state->isValidMove(entry.move)) {
       ++tt_hits;
       if (entry.value_type == TTEntryType::EXACT_VALUE) {
         ++tt_exacts;
@@ -481,14 +508,16 @@ struct Minimax : public Algorithm<S, M> {
         return {entry.value, entry.move, true};
       }
     }
-    
+
     int max_goodness = -INF;
     bool completed = true;
-    std::vector<M> legal_moves = state->get_legal_moves(MAX_MOVES);
+    std::vector<M> legal_moves = (indent == 0 && mHasCachedRootMoves)
+      ? mCachedRootMoves
+      : state->get_legal_moves(MAX_MOVES);
 
     assert(legal_moves.size() > 0);
     bool found_best_move = false;
-    
+
     for (int i = 0; i < legal_moves.size(); i++) {
       M move = legal_moves[i];
 
@@ -496,7 +525,7 @@ struct Minimax : public Algorithm<S, M> {
       // FIX-ME to some cool macro thing that makes that clearer.
       {
 	StateUndoer<S, M> undoer(*state, move);
-	          
+
 	state->make_move(move);
 	const int goodness = -minimax(
 				      state,
@@ -505,12 +534,12 @@ struct Minimax : public Algorithm<S, M> {
 				      -alpha,
 				      indent + 1).goodness;
 	VLOG(9) << *state << std::endl;
-        
+
 	if (timer.exceeded(MAX_SECONDS)) {
 	  completed = false;
 	  break;
 	}
-          
+
 	if (goodness > max_goodness) {
 	  max_goodness = goodness;
 	  best_move = move;
@@ -523,12 +552,12 @@ struct Minimax : public Algorithm<S, M> {
 	  }
 	}
       }
-        
+
       if (alpha < max_goodness) {
 	alpha = max_goodness;
       }
     }
-    
+
     if (mUseTranspositionTable && completed) {
       update_tt(state, alpha_original, beta, max_goodness, best_move, depth);
     }
@@ -543,7 +572,7 @@ struct Minimax : public Algorithm<S, M> {
   }
 
   Random random;
-  
+
   bool get_tt_entry(S *state, TTEntry<M> &entry) {
     auto key = state->hash();
     auto it = transposition_table.find(key);
@@ -556,12 +585,12 @@ struct Minimax : public Algorithm<S, M> {
     entry = it->second;
     return true;
   }
-  
+
   void add_tt_entry(S *state, const TTEntry<M> &entry) {
     auto key = state->hash();
     transposition_table[key] = entry;
   }
-  
+
   void update_tt(S *state, int alpha, int beta, int max_goodness, M &best_move, int depth) {
     TTEntryType value_type;
     if (max_goodness <= alpha) {
@@ -576,7 +605,7 @@ struct Minimax : public Algorithm<S, M> {
     TTEntry<M> entry = {best_move, state->tt_verification_key(), depth, max_goodness, value_type};
     add_tt_entry(state, entry);
   }
-  
+
   std::string get_name() const override {
     return "Minimax";
   }
@@ -589,7 +618,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
   const int max_simulations;
   const bool block;
   Random random;
-  
+
   MonteCarloTreeSearch(double max_seconds = 1,
                        int max_simulations = MAX_SIMULATIONS,
                        bool block = false) :
@@ -597,7 +626,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
   max_seconds(max_seconds),
   block(block),
   max_simulations(max_simulations) {}
-  
+
   M get_move(S *root) override {
     if (root->is_terminal()) {
       std::stringstream stream;
@@ -627,20 +656,20 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return get_most_visited_move(root);
   }
-  
+
   void monte_carlo_tree_search(S *root) {
     S *current = tree_policy(root, root);
     auto result = rollout(current, root);
     propagate_up(current, result);
   }
-  
+
   void propagate_up(S *current, double result) {
     current->update_stats(result);
     if (current->parent) {
       propagate_up(current->parent, result);
     }
   }
-  
+
   S* tree_policy(S *state, S *root) {
     if (state->is_terminal()) {
       return state;
@@ -652,7 +681,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return tree_policy(child, root);
   }
-  
+
   M get_most_visited_move(S *state) {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
@@ -671,7 +700,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     assert(max_visits != -INF);
     return best_move;
   }
-  
+
   M get_best_move(S *state, S *root) {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
@@ -710,15 +739,15 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return best_move;
   }
-  
+
   M get_random_move(const S *state) {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
     int index = random.uniform(0, legal_moves.size() - 1);
     return legal_moves[index];
   }
-  
-  
+
+
   std::shared_ptr<M> get_winning_move(S *state) {
     auto current_player = state->player_to_move;
     auto legal_moves = state->get_legal_moves();
@@ -733,7 +762,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return nullptr;
   }
-  
+
   std::shared_ptr<M> get_blocking_move(S *state) {
     auto current_player = state->player_to_move;
     auto enemy = state->get_enemy(current_player);
@@ -752,7 +781,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     state->player_to_move = current_player;
     return nullptr;
   }
-  
+
   M get_tree_policy_move(S *state, S *root) {
     // If player has a winning move he makes it.
     auto move_ptr = get_winning_move(state);
@@ -768,7 +797,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return get_best_move(state, root);
   }
-  
+
   M get_default_policy_move(S *state) {
     // If player has a winning move he makes it.
     auto move_ptr = get_winning_move(state);
@@ -782,7 +811,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     }
     return get_random_move(state);
   }
-  
+
   double rollout(S *current, S *root) {
     if (current->is_terminal()) {
       if (current->is_winner(root->player_to_move)) {
@@ -800,11 +829,11 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
       return result;
     }
   }
-  
+
   std::string get_name() const override {
     return "MonteCarloTreeSearch";
   }
-  
+
 };
 
 template<class S, class M>
@@ -815,12 +844,12 @@ struct Tester {
   const int MATCHES;
   const bool VERBOSE;
   const double SIGNIFICANCE_LEVEL = 0.005; // two sided 99% confidence interval
-  
+
   Tester(S *state, Algorithm<S, M> &algorithm_1, Algorithm<S, M> &algorithm_2, int matches = INF, bool verbose = false) :
   root(state), algorithm_1(algorithm_1), algorithm_2(algorithm_2), MATCHES(matches), VERBOSE(verbose) {}
-  
+
   virtual ~Tester() {}
-  
+
   int start() {
     int draws = 0;
     int algorithm_1_wins = 0;

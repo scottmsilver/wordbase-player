@@ -90,16 +90,16 @@ struct LegalWord {
 class LegalWordFactory {
   // Next (LegalWord)Id to allocate.
   int mNextId;
-  
+
   // LegalWord indexed by LegalWordId. As in the word  LegalWordId 0 is the first entry in this vector.
   std::vector<std::shared_ptr<LegalWord>> mLegalWordMap;
-  
+
   // Maps CoordinateList to a LegalWord.
   std::unordered_map<CoordinateList, std::shared_ptr<LegalWord>> mCoordinateListMap;
-  
+
   // Maps string version of word to all all LegalWordIds for that word.
   std::multimap<std::string, LegalWordId> mWordToLegalWordIds;
-  
+
   // Maps renumbered minimizer value to a LegalWord.
   std::vector<LegalWordId> mRenumberedMinimizerValueToLegalWord;
 
@@ -111,7 +111,7 @@ class LegalWordFactory {
 
 public:
   LegalWordFactory() : mNextId(0) { }
-  
+
   // Returns a unique LegalWordId for the passed in instance of the word at wordSequence or throws if it has already seen that wordSequence.
   //
   // maximizerGoodness and minimizerGoodness are the heuristic values of this word from the perspective of the maximizer
@@ -121,18 +121,18 @@ public:
     if (mCoordinateListMap.find(wordSequence) != mCoordinateListMap.end()) {
       throw;
     }
-    
+
     std::shared_ptr<LegalWord> legalWord(new LegalWord({mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness, 0, 0}));
-    
+
     mLegalWordMap.resize(legalWord->mId + 1);
     mEquivalentWordIds.resize(legalWord->mId + 1);
     mLegalWordMap[legalWord->mId] = legalWord;
     mCoordinateListMap.insert(std::pair<CoordinateList, std::shared_ptr<LegalWord>>(wordSequence, legalWord));
     mWordToLegalWordIds.insert(std::pair<std::string, LegalWordId>(word, legalWord->mId));
-    
+
     return *legalWord;
   }
-  
+
   // Return the LegalWord for the given id.
   const LegalWord& getWord(LegalWordId id) const {
     if (id < mNextId && id >= 0) {
@@ -149,7 +149,7 @@ public:
       throw;
     }
   }
-  
+
   // Return the beginning and end of range of all LegalWordIds with this same word.
   // FIX-ME(ssilver): We should be returning const ranges.
   std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
@@ -176,7 +176,7 @@ public:
   const std::vector<LegalWordId>& getEquivalentWordIds(LegalWordId id) const {
     return mEquivalentWordIds[id];
   }
-  
+
   // Returns the LegalWord associated at coordinateList or throws.
   const LegalWord& getWord(const CoordinateList& coordinateList) const {
     auto legalWordIterator = mCoordinateListMap.find(coordinateList);
@@ -186,33 +186,33 @@ public:
       throw;
     }
   }
-  
+
   struct Goodness2 {
     bool mIsMaximizer;
-    
+
     Goodness2(bool isMaximizer) : mIsMaximizer(isMaximizer) { }
-    
+
     bool operator()(const std::shared_ptr<LegalWord>& i, const std::shared_ptr<LegalWord>& j) const {
       return heuristicValue(i) > heuristicValue(j);
     }
-    
+
     int heuristicValue(const std::shared_ptr<LegalWord>& x) const {
       return (mIsMaximizer) ? x->mMaximizerGoodness : x->mMinimizerGoodness;
     }
-    
+
     // Used in conjunction with spreadsort. Right shift the value
     inline int operator()(const std::shared_ptr<LegalWord>& x, unsigned offset) const {
       return heuristicValue(x) >> offset;
     }
   };
-  
+
   void renumberByGoodness() {
     // Make a copy.
     std::vector<std::shared_ptr<LegalWord>> legalWordsCopy(mLegalWordMap);
-    
+
     // Sort by heuristic.
     std::sort(legalWordsCopy.begin(), legalWordsCopy.end(), Goodness2(false));
-    
+
     // Renumber.
     int number = 0;
     mRenumberedMinimizerValueToLegalWord.resize(legalWordsCopy.size());
@@ -220,7 +220,7 @@ public:
       legalWord->mRenumberedMinimizerGoodness = number++;
       mRenumberedMinimizerValueToLegalWord[legalWord->mRenumberedMinimizerGoodness] = legalWord->mId;
     }
-    
+
     std::sort(legalWordsCopy.begin(), legalWordsCopy.end(), Goodness2(true));
     number = 0;
     mRenumberedMaximizerValueToLegalWord.resize(legalWordsCopy.size());
@@ -229,13 +229,13 @@ public:
       mRenumberedMaximizerValueToLegalWord[legalWord->mRenumberedMaximizerGoodness] = legalWord->mId;
     }
   }
-  
+
   const LegalWordId getLegalWordFromRenumberedGoodness(int goodness, bool isMaximizer) const {
     auto& goodnessToLegalWordMap = isMaximizer ? mRenumberedMaximizerValueToLegalWord : mRenumberedMinimizerValueToLegalWord;
     assert(goodness < goodnessToLegalWordMap.size());
     return goodnessToLegalWordMap[goodness];
   }
-  
+
   int getSize() const { return mNextId; }
 };
 
@@ -251,7 +251,7 @@ private:
 
   // The set of LegalWordIds at this position.
   std::vector<int> mLegalWordIds;
-  
+
 public:
   LegalWordList() : mMinimizerWordIdBits(0), mMaximizerWordIdBits(0) {
   }
@@ -271,7 +271,7 @@ public:
     mMaximizerWordIdBits[renumberedMaximizerGoodness] = 1;
     mMinimizerWordIdBits[renumberedMinimizerGoodness] = 1;
   }
-  
+
   void push_back(LegalWordId legalWordId) {
     mLegalWordIds.push_back(legalWordId);
   }
@@ -285,10 +285,10 @@ class BoardStatic {
   std::unordered_map<int, std::vector<std::pair<std::string, CoordinateList>>> mValidWordPathsGrid;
   LegalWordFactory mLegalWordFactory;
   Grid<LegalWordList, kBoardHeight, kBoardWidth> mLegalWords;
-  
+
   // The location of the bombs on the board; each entry in the CoordinateList is the location of a bomb.
   CoordinateList mBombs;
-  
+
   // The location of the mega-bombs on the board; each entry in the CoordinateList is the location of a mega-bomb.
   CoordinateList mMegabombs;
 
@@ -297,11 +297,11 @@ class BoardStatic {
   Grid<int, kBoardHeight, kBoardWidth> mMinimizerSquareForwardReach;
   std::vector<int> mLegalWordScratchGeneration;
   int mCurrentScratchGeneration;
-  
+
 public:
   std::vector<char> mGrid;
   const WordDictionary& mDictionary;
-  
+
   // Create a new board.
   //
   // gridText is string representing a grid in row major order of height kBoardHeight and
@@ -326,11 +326,11 @@ public:
         }
       }
     }
-    
+
     if (mGrid.size() != kBoardHeight * kBoardWidth) {
       throw;
     }
-    
+
     findLegalWordsForGrid();
     initializeSquareWordCounts();
     initializeSquareForwardReach();
@@ -338,7 +338,7 @@ public:
     recomputeLegalWordGoodness();
     mLegalWordFactory.finalizeEquivalentWordIds();
     mLegalWordFactory.renumberByGoodness();
-    
+
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         LegalWordList& legalWordList = mLegalWords.get(y, x);
@@ -349,21 +349,23 @@ public:
       }
     }
   }
-  
+
+  char getGridChar(int y, int x) const { return mGrid[y * kBoardWidth + x]; }
+
   const LegalWord& getLegalWord(int id) const {
     return mLegalWordFactory.getWord(id);
   }
-  
+
   const LegalWord& getLegalWord(const CoordinateList& coordinateList) const {
     return mLegalWordFactory.getWord(coordinateList);
   }
-  
+
   const LegalWordId getLegalWordIdFromRenumberedGoodness(int goodness, bool isMaximizer) const {
     return mLegalWordFactory.getLegalWordFromRenumberedGoodness(goodness, isMaximizer);
   }
-  
+
   int getLegalWordsSize() { return mLegalWordFactory.getSize(); }
-  
+
   // Return the beginning and end of range of all LegalWordIds with this same word.
   std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> getLegalWordIds(const std::string& word) {
     return mLegalWordFactory.getLegalWordIds(word);
@@ -372,37 +374,37 @@ public:
   const std::vector<LegalWordId>& getEquivalentLegalWordIds(LegalWordId legalWordId) const {
     return mLegalWordFactory.getEquivalentWordIds(legalWordId);
   }
-  
+
   // Return the word represented by the passed in sequence.
   std::string wordFromMove(const CoordinateList& move) {
     std::stringstream wordText;
-    
+
     for (auto pathElement : move) {
       wordText << mGrid[pathElement.first * kBoardWidth + pathElement.second];
     }
-    
+
     return wordText.str();
   }
-  
+
   // Return all the valid words for the given grid square.
   const std::vector<std::pair<std::string, CoordinateList>>& findValidWordPaths(int y, int x) {
     int gridKey = y * kBoardWidth + x;
     auto pathsAtGridIterator = mValidWordPathsGrid.find(gridKey);
-    
+
     if (pathsAtGridIterator == mValidWordPathsGrid.end()) {
       std::vector<std::pair<std::string, CoordinateList>> validWordPaths;
       LegalWordList wordList;
-      
+
       findWordPaths(y, x, "", CoordinateList(), validWordPaths, wordList);
       pathsAtGridIterator = mValidWordPathsGrid.insert(
                                                        std::pair<int, std::vector<std::pair<std::string, CoordinateList>>>(
                                                                                                                            gridKey, validWordPaths)).first;
       mLegalWords.set(y, x, wordList);
     }
-    
+
     return pathsAtGridIterator->second;
   }
-  
+
   void findLegalWordsForGrid() {
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
@@ -410,14 +412,14 @@ public:
       }
     }
   }
-  
+
   const LegalWordList& getLegalWords(int y, int x) const {
     return mLegalWords.get(y, x);
   }
-  
+
   const CoordinateList& getBombs() const { return mBombs; }
   const CoordinateList& getMegabombs() const { return mMegabombs; }
-  
+
 private:
   void initializeSquareWordCounts() {
     for (int y = 0; y < kBoardHeight; y++) {
@@ -568,7 +570,7 @@ private:
 
     return maximizerGoodness;
   }
-  
+
   int minimizerGoodness(const CoordinateList& moveSequence) const {
     int minimizerGoodness = 0;
     int furthestRow = kBoardHeight - 1;
@@ -590,38 +592,38 @@ private:
 
     return minimizerGoodness;
   }
-  
-  
+
+
   // Adds all valid words from given grid square to a map.
   void findWordPaths(int y, int x, std::string prefix, CoordinateList prefixPath,
                      std::vector<std::pair<std::string, CoordinateList>>& validWordPaths, LegalWordList& wordList) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
-    
+
     // If (y,x) already in this prefix cut off the search, since a grid square
     // can only be used once.
     if (std::find(prefixPath.begin(), prefixPath.end(),
                   std::pair<int, int>(y, x)) != prefixPath.end()) {
       return;
     }
-    
+
     // If there exist no words > word is of length 2 or more.
     if (prefixPath.size() >= 2 && !mDictionary.hasPrefix(prefix)) {
       return;
     }
-    
+
     prefix = std::string(prefix) + mGrid[y * kBoardWidth + x];
     prefixPath = CoordinateList(prefixPath);
     prefixPath.push_back(std::pair<int, int>(y, x));
-    
-    
+
+
     // Keep track of our word as (word, path) if it's a real word.
     if (mDictionary.hasWord(prefix)) {
       validWordPaths.push_back(std::pair<std::string, CoordinateList>(prefix, prefixPath));
       wordList.push_back(mLegalWordFactory.acquireWord(prefixPath, prefix, maximizerGoodness(prefixPath), minimizerGoodness(prefixPath)).mId);
     }
-    
+
     // Vist all neighbors.
     findWordPaths(y - 1, x - 1, prefix, prefixPath, validWordPaths, wordList);
     findWordPaths(y - 1, x, prefix, prefixPath, validWordPaths, wordList);

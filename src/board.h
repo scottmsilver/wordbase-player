@@ -42,6 +42,10 @@ const int kSquareForwardReachDivisor = 4;
 // Add a lighter extra nudge once a path is already across midfield, so support on advanced cells like the
 // upper-half "interrobang" spine beats the same reach value spent mostly on home-row cleanup traffic.
 const int kAdvancedSquareForwardReachDivisor = 8;
+// Once a path is already across midfield, lightly favor advanced anchor squares that still support many
+// future words. Example: an upper-half INTERROBANG spine square should beat an equally dense home-side knot
+// because the same overlap is more actionable when it is already pressing near the goal line.
+const int kAdvancedSquareWordCountDivisor = 8;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -524,6 +528,18 @@ private:
     return bonus / kAdvancedSquareForwardReachDivisor;
   }
 
+  int advancedSquareWordCountBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int bonus = 0;
+    for (const auto& cell : wordSequence) {
+      const int progress = isMaximizer ? cell.first : (kBoardHeight - 1 - cell.first);
+      if (progress < kBoardHeight / 2) {
+        continue;
+      }
+      bonus += mSquareWordCounts.get(cell.first, cell.second);
+    }
+    return bonus / kAdvancedSquareWordCountDivisor;
+  }
+
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
     // This is build-time work only: estimate how many distinct future starts this path unlocks.
     // Example: if the claimed squares leave both "stare" and "stone" available next turn, that is
@@ -592,6 +608,7 @@ private:
     maximizerGoodness += squareWordCountBonus(wordSequence, true);
     maximizerGoodness += squareForwardReachBonus(wordSequence, true);
     maximizerGoodness += advancedSquareForwardReachBonus(wordSequence, true);
+    maximizerGoodness += advancedSquareWordCountBonus(wordSequence, true);
 
     return maximizerGoodness;
   }
@@ -615,6 +632,7 @@ private:
     minimizerGoodness += squareWordCountBonus(moveSequence, false);
     minimizerGoodness += squareForwardReachBonus(moveSequence, false);
     minimizerGoodness += advancedSquareForwardReachBonus(moveSequence, false);
+    minimizerGoodness += advancedSquareWordCountBonus(moveSequence, false);
 
     return minimizerGoodness;
   }

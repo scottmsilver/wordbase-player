@@ -380,21 +380,52 @@ public:
   const CoordinateList& getMegabombs() const { return mMegabombs; }
   
 private:
+  bool pathTouches(const CoordinateList& wordSequence, const CoordinateList& targets) const {
+    for (const auto& cell : wordSequence) {
+      if (std::find(targets.begin(), targets.end(), cell) != targets.end()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   int maximizerGoodness(const CoordinateList& wordSequence) const {
     int maximizerGoodness = 0;
+    int furthestRow = 0;
     for (auto x : wordSequence) {
       maximizerGoodness += (x.first + 1) * (x.first + 1);
+      furthestRow = std::max(furthestRow, x.first);
     }
-    
+
+    maximizerGoodness += static_cast<int>(wordSequence.size()) * 16;
+    maximizerGoodness += furthestRow * 32;
+    if (pathTouches(wordSequence, mBombs)) {
+      maximizerGoodness += 96;
+    }
+    if (pathTouches(wordSequence, mMegabombs)) {
+      maximizerGoodness += 192;
+    }
+
     return maximizerGoodness;
   }
   
   int minimizerGoodness(const CoordinateList& moveSequence) const {
     int minimizerGoodness = 0;
+    int furthestRow = kBoardHeight - 1;
     for (auto x : moveSequence) {
       minimizerGoodness += (x.first - kBoardHeight) * (x.first - kBoardHeight);
+      furthestRow = std::min(furthestRow, x.first);
     }
-    
+
+    minimizerGoodness += static_cast<int>(moveSequence.size()) * 16;
+    minimizerGoodness += (kBoardHeight - 1 - furthestRow) * 32;
+    if (pathTouches(moveSequence, mBombs)) {
+      minimizerGoodness += 96;
+    }
+    if (pathTouches(moveSequence, mMegabombs)) {
+      minimizerGoodness += 192;
+    }
+
     return minimizerGoodness;
   }
   

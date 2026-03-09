@@ -281,7 +281,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         break;
       }
     }
-    
+
     // Since messing with h if h == INF will cause it to overflow, don't touch it.
     if (h != INF && h != -INF) {
       for (int y = 1; y < kBoardHeight - 1; y++) {

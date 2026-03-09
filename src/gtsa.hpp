@@ -496,7 +496,7 @@ struct Minimax : public Algorithm<S, M> {
       // FIX-ME to some cool macro thing that makes that clearer.
       {
 	StateUndoer<S, M> undoer(*state, move);
-          
+	          
 	state->make_move(move);
 	const int goodness = -minimax(
 				      state,

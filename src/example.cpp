@@ -367,7 +367,6 @@ namespace {
     WordBaseState state(&board, PLAYER_1);
 
     EXPECT_EQ(state.hash(), state.computeHashFromState());
-
     state.addAlreadyPlayed("glam");
     EXPECT_EQ(state.hash(), state.computeHashFromState());
 

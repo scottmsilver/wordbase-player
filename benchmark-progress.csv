@@ -1,3 +1,10 @@
 timestamp,status,scenario,commit,change_ref,total_nodes,avg_nodes_per_turn,deepest_completed_depth,notes
 2026-03-08T20:14:09-07:00,baseline,profile,bf81c22,steady-state-profiling-benchmark,246590,49318,3,"5 repeated searches after 2 warmup turns; benchmark from scripts/run-benchmarks.sh profile"
-2026-03-08T20:14:09-07:00,kept,profile,pending,tt-verification-key,246590,49318,3,"Added independent TT verification key and collision regression test; no measured node change on profile baseline"
+2026-03-08T20:14:09-07:00,kept,profile,e15793c,tt-verification-key,246590,49318,3,"Added independent TT verification key and collision regression test; no measured node change on profile baseline"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,pvs-null-window,190870,38174,3,"Principal variation search reduced repeated-search throughput versus baseline; reverted"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,tt-hash-move-ordering,174115,34823,3,"TT move-to-front ordering reduced repeated-search throughput versus baseline; reverted"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,fixed-size-tt-table,246590,49318,3,"Direct-index TT table with simple overwrite policy did not improve repeated-search node count; reverted"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,root-pv-ordering,208000,41600,3,"Iterative-deepening root preferred move ordering reduced repeated-search throughput versus baseline; reverted"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,cached-goodness-evaluation,246590,49318,3,"Incremental leaf evaluation preserved behavior but did not improve repeated-search node count; reverted"
+2026-03-08T20:14:09-07:00,discarded,profile,working-tree,killer-moves,174125,34825,3,"Generic killer-move ordering reduced repeated-search throughput versus baseline; reverted"
+2026-03-08T20:14:09-07:00,kept,profile,working-tree,wordbase-path-heuristic-v1,275945,55189,3,"Added static move-ordering bonuses for word length, edge progress, and bomb contact; repeated-search baseline improved and reproduced"

@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MODEL" ]]; then
-  MODEL="gpt-5.2-codex"
+  MODEL="gpt-5.4"
 fi
 if [[ -z "$MASTER_MODEL" ]]; then
   MASTER_MODEL="$MODEL"

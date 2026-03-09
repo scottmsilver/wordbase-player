@@ -116,19 +116,54 @@ struct Goodness2 {
 
 
 // State of Wordbase game.
+// Fixed-capacity bitset that avoids heap allocation. Max 8192 bits (1KB).
+struct InlineBitset {
+  static constexpr int kMaxWords = 128;  // 128 * 64 = 8192 bits
+  uint64_t words[kMaxWords];
+  int size_bits;
+
+  InlineBitset() : size_bits(0) { memset(words, 0, sizeof(words)); }
+  explicit InlineBitset(int n) : size_bits(n) { memset(words, 0, sizeof(words)); }
+
+  InlineBitset(const InlineBitset& rhs) : size_bits(rhs.size_bits) {
+    int nwords = (size_bits + 63) >> 6;
+    memcpy(words, rhs.words, nwords * 8);
+  }
+  InlineBitset& operator=(const InlineBitset& rhs) {
+    size_bits = rhs.size_bits;
+    int nwords = (size_bits + 63) >> 6;
+    memcpy(words, rhs.words, nwords * 8);
+    return *this;
+  }
+
+  bool operator[](int i) const { return (words[i >> 6] >> (i & 63)) & 1; }
+  void set(int i, bool v) {
+    if (v) words[i >> 6] |= (1ULL << (i & 63));
+    else words[i >> 6] &= ~(1ULL << (i & 63));
+  }
+  int size() const { return size_bits; }
+  bool operator==(const InlineBitset& rhs) const {
+    if (size_bits != rhs.size_bits) return false;
+    int nwords = (size_bits + 63) >> 6;
+    return memcmp(words, rhs.words, nwords * 8) == 0;
+  }
+};
+
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   BoardStatic* mBoard;
   WordBaseGridState mState;
-  std::vector<bool> mPlayedWords;
+  InlineBitset mPlayedWords;
   size_t mHashValue;
   uint64_t mTtVerificationKey;
+  bool mTookEnemyCell;
 
   WordBaseState(BoardStatic* board, char playerToMove)
     : State<WordBaseState, WordBaseMove>(playerToMove),
       mBoard(board),
-      mPlayedWords(mBoard->getLegalWordsSize(), false),
+      mPlayedWords(mBoard->getLegalWordsSize()),
       mHashValue(0),
-      mTtVerificationKey(0) {
+      mTtVerificationKey(0),
+      mTookEnemyCell(false) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
     mHashValue = computeHashFromState();
@@ -139,7 +174,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
-  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey) {
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mTookEnemyCell(false) {
   }
 
   WordBaseState clone() const override {
@@ -220,7 +255,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
     mHashValue ^= playedWordHashToken(legalWordId);
     mTtVerificationKey ^= playedWordVerificationToken(legalWordId);
-    mPlayedWords[legalWordId] = played;
+    mPlayedWords.set(legalWordId, played);
   }
 
   void setPlayerToMove(char player) {
@@ -355,8 +390,11 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // word may appear through multiple paths.
   // Also note that words which are already played are excluded.
   std::vector<WordBaseMove> get_legal_moves2(int max_moves, const char* filter) const {
-    // Initialize all the valid words to zero.
-    boost::dynamic_bitset<> validWordBits(mBoard->getLegalWordsSize());
+    // Reuse a static bitset to avoid heap allocation per call.
+    static boost::dynamic_bitset<> validWordBits;
+    const int legalWordsSize = mBoard->getLegalWordsSize();
+    validWordBits.resize(legalWordsSize);
+    validWordBits.reset();
 
     // For each letter owned by the current player find candidate words OR them all together
     // They are implicitly in "order" so this effectively sorts them too.
@@ -372,9 +410,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       }
     }
 
+    const size_t totalCount = validWordBits.count();
     const size_t maxMoveCount = max_moves == INF
-      ? validWordBits.count()
-      : std::min(validWordBits.count(), static_cast<size_t>(max_moves));
+      ? totalCount
+      : std::min(totalCount, static_cast<size_t>(max_moves));
     std::vector<WordBaseMove> moves(maxMoveCount);
 
     int moveIndex = 0;
@@ -434,13 +473,18 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
   // Record the claiming of a single grid square.
   // Deal with the impacts of bombs by recursing, as appropriate.
+  // Sets mTookEnemyCell if an enemy cell is overwritten.
   void recordOne(int y, int x) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
 
-    bool hadBomb = (mState.get(y, x) == PLAYER_BOMB);
-    bool hadMegabomb = (mState.get(y, x) == PLAYER_MEGABOMB);
+    const char currentOwner = mState.get(y, x);
+    bool hadBomb = (currentOwner == PLAYER_BOMB);
+    bool hadMegabomb = (currentOwner == PLAYER_MEGABOMB);
+    if (currentOwner == get_enemy(player_to_move)) {
+      mTookEnemyCell = true;
+    }
 
     setCellState(y, x, player_to_move);
 
@@ -478,6 +522,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // Record a single move in the game. Iterates through each grid square, claiming that square.
   void recordMove(const WordBaseMove& move) {
     assert(isValidMove(move));
+    mTookEnemyCell = false;
     const CoordinateList& wordSequence = mBoard->getLegalWord(move.mLegalWordId).mWordSequence;
 
     // Record each letter.
@@ -492,63 +537,41 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
   }
 
-  // Starting at (y, x) mark all grid squares that are connected to (y, x).
-  // A grid square is connected to (y, x) if it is eventually connected to (y, x) through
-  // any path and has the same owner as (y, x).
-  // Mark it by setting the the the high bit.
-  //
-  // This must be followed by a call to clearNotConnected().
-  // FIX-ME(ssilver): We should probably change the protocol here so that it is not
-  // possible to mark without clearing.
+  // Flood-fill from (y, x), marking all connected same-owner cells with bit 0x8.
+  // Grid writes bypass hash updates since the 0x8 bit is transient.
+  // Must be followed by clearing 0x8 bits and disconnecting unreached cells.
   void markConnected(int y, int x, char owner) {
     if (y < 0 || y >= kBoardHeight || x < 0 || x >= kBoardWidth) {
       return;
     }
+    const char cellOwner = mState.get(y, x);
+    if (cellOwner != owner || (cellOwner & 0x8)) {
+      return;
+    }
 
-    std::vector<std::pair<int, int> > stack;
-    stack.push_back(std::make_pair(y, x));
+    // Pack (y, x) as (y << 4) | x. Works since x < 10 < 16 and y < 13.
+    static std::vector<uint16_t> stack;
+    stack.clear();
+    mState.set(y, x, owner | 0x8);
+    stack.push_back((y << 4) | x);
     while (!stack.empty()) {
-      const std::pair<int, int> current = stack.back();
+      const uint16_t current = stack.back();
       stack.pop_back();
 
-      const int currentY = current.first;
-      const int currentX = current.second;
-      if (currentY < 0 || currentY >= kBoardHeight || currentX < 0 || currentX >= kBoardWidth) {
-        continue;
-      }
-
-      const char visitedOwner = mState.get(currentY, currentX);
-      if ((visitedOwner & 0x8) != 0 || owner != visitedOwner) {
-        continue;
-      }
-
-      setCellState(currentY, currentX, visitedOwner | 0x8);
+      const int currentY = current >> 4;
+      const int currentX = current & 0xF;
 
       for (int deltaY = -1; deltaY <= 1; deltaY++) {
         for (int deltaX = -1; deltaX <= 1; deltaX++) {
-          if (deltaY != 0 || deltaX != 0) {
-            stack.push_back(std::make_pair(currentY + deltaY, currentX + deltaX));
+          if (deltaY == 0 && deltaX == 0) continue;
+          const int ny = currentY + deltaY;
+          const int nx = currentX + deltaX;
+          if (ny < 0 || ny >= kBoardHeight || nx < 0 || nx >= kBoardWidth) continue;
+          const char neighborOwner = mState.get(ny, nx);
+          if (neighborOwner == owner) {
+            mState.set(ny, nx, owner | 0x8);
+            stack.push_back((ny << 4) | nx);
           }
-        }
-      }
-    }
-  }
-
-  // Clear any square not connected after a call to markConnected().
-  // This has the impact of removing ownership of a square that was
-  // previously owned.
-  void clearNotConnected() {
-    // FIX-ME move this to regular iterator...
-    for (int y = 0; y < kBoardHeight; y++) {
-      for (int x = 0; x < kBoardWidth; x++) {
-        char owner = mState.get(y, x);
-
-        if (owner & 0x8) {
-          setCellState(y, x, owner & 0x7);
-        } else if (owner == PLAYER_BOMB || owner == PLAYER_MEGABOMB) {
-          // Skip this one. We didn't visit it so it's definitionally unowned.
-        } else {
-          setCellState(y, x, PLAYER_UNOWNED);
         }
       }
     }
@@ -559,15 +582,27 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // Make the move.
     recordMove(move);
 
-    // Mark from all possible roots; the two sides of the board.
-    for (int y : {0, kBoardHeight - 1}) {
-      for (int x = 0; x < kBoardWidth; x++) {
-        markConnected(y, x, mState.get(y, x));
+    // Only check connectivity if enemy cells were taken (otherwise no disconnection possible).
+    if (mTookEnemyCell) {
+      // Mark from all possible roots; the two sides of the board.
+      for (int y : {0, kBoardHeight - 1}) {
+        for (int x = 0; x < kBoardWidth; x++) {
+          markConnected(y, x, mState.get(y, x));
+        }
+      }
+
+      // Clear visited marks and disconnect any unreached owned cells.
+      for (int y = 0; y < kBoardHeight; y++) {
+        for (int x = 0; x < kBoardWidth; x++) {
+          char owner = mState.get(y, x);
+          if (owner & 0x8) {
+            mState.set(y, x, owner & 0x7);
+          } else if (owner != PLAYER_UNOWNED && owner != PLAYER_BOMB && owner != PLAYER_MEGABOMB) {
+            setCellState(y, x, PLAYER_UNOWNED);
+          }
+        }
       }
     }
-
-    // Clear out any that we didn't reach (as in the move we made cut off another person's line)
-    clearNotConnected();
 
     // Change to the new player.
     setPlayerToMove(get_enemy(player_to_move));

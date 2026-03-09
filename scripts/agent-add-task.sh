@@ -100,15 +100,15 @@ Explain the expected win in search terms. Be concrete about the board pattern or
 Describe the narrow code change to make. Prefer one idea only, and point to the file/function to touch.
 
 # Exact benchmark commands
-Run these in order, and only keep a change if both stages pass:
+Run profile-suite as the primary gate, then profile for additional signal:
 
 \`\`\`bash
-./scripts/run-benchmarks.sh profile
 ./scripts/run-benchmarks.sh profile-suite
+./scripts/run-benchmarks.sh profile
 \`\`\`
 
 # Keep/revert criteria
-Keep only if \`profile\` shows a real win without dropping depth and \`profile-suite\` shows no obvious regression overall or on an individual suite board. Revert if the result is flat, noisy, or overfits the single-board benchmark.
+Keep only if the profile-suite AVERAGE (avg_total_nodes) improves without any individual board regressing badly (>10% drop) or losing depth. Single-board-only wins that don't generalize across the suite are overfitting and should be discarded.
 EOF
 
 if [[ "$OPEN_EDITOR" -eq 1 ]]; then

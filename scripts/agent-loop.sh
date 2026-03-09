@@ -290,10 +290,19 @@ Operating rules:
 - Revert losers instead of leaving churn in the tree.
 - Add short comments for non-obvious heuristic and search changes, and explain the intuition with concrete Wordbase-style examples.
 - Prefer broad, board-derived, static move-ordering signals over brittle max-style features.
-- Use the checked-in benchmark scenarios and treat repeated-search profile results as the primary gate for search tuning.
-- After a change wins on profile, check profile-suite before keeping it so we do not overfit the README board.
-- If a result is marginal, rerun it and keep it only if it reproduces.
 - Do not touch unrelated untracked files.
+
+Benchmark and keep/discard protocol:
+- Run ./scripts/run-benchmarks.sh profile-suite as the PRIMARY benchmark gate.
+- Also run ./scripts/run-benchmarks.sh profile for additional single-board signal.
+- Keep/discard decisions must be based on the SUITE-WIDE average (avg_total_nodes from the profile-suite summary line), not a single board.
+- A change is a KEEP only if:
+  1. The suite average improves (higher avg_total_nodes).
+  2. No individual suite board regresses badly (drops more than 10% on any one board).
+  3. Deepest completed depth does not drop on any board.
+- A change that wins on one board but loses on another is NOT a keep — it's overfitting.
+- If a result is marginal (less than 2% suite-average gain), rerun it and keep only if it reproduces.
+- Log the profile-suite summary numbers (avg_total_nodes, per-board breakdown) in the benchmark CSV notes field.
 
 Current repository head:
 - $current_head
@@ -317,7 +326,7 @@ Your job in this iteration:
 - Treat $ROOT_DIR as the only workspace root for this run.
 - Inspect the current tree state.
 - Execute the assigned experiment or the best next conservative experiment if no task was assigned.
-- Benchmark with ./scripts/run-benchmarks.sh profile first, then ./scripts/run-benchmarks.sh profile-suite for any candidate you might keep.
+- Benchmark with ./scripts/run-benchmarks.sh profile-suite first (primary gate), then ./scripts/run-benchmarks.sh profile for additional signal.
 - Leave the branch in a sensible state at the end of the iteration.
 EOF
 }

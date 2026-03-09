@@ -90,10 +90,15 @@ fi
 mkdir -p "$STATE_DIR" "$TASK_ROOT/pending" "$TASK_ROOT/in-progress" "$TASK_ROOT/done" "$TASK_ROOT/failed"
 
 build_prompt() {
-  local pending_count recent_kept recent_discards previous_summary
+  local pending_count all_kept all_discards recent_discards previous_summary
+  local done_task_titles discard_count kept_count
   pending_count="$(find "$TASK_ROOT/pending" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
-  recent_kept="$(awk -F, 'NR>1 && $2=="kept" { rows[++n]=$0 } END { start=n-2; if (start < 1) start=1; for (i=start; i<=n; ++i) print rows[i] }' "$BENCHMARK_LOG" 2>/dev/null || true)"
-  recent_discards="$(awk -F, 'NR>1 && $2=="discarded" { rows[++n]=$0 } END { start=n-4; if (start < 1) start=1; for (i=start; i<=n; ++i) print rows[i] }' "$BENCHMARK_LOG" 2>/dev/null || true)"
+  all_kept="$(awk -F, 'NR>1 && $2=="kept" { print $0 }' "$BENCHMARK_LOG" 2>/dev/null || true)"
+  all_discards="$(awk -F, 'NR>1 && $2=="discarded" { print $0 }' "$BENCHMARK_LOG" 2>/dev/null || true)"
+  recent_discards="$(awk -F, 'NR>1 && $2=="discarded" { rows[++n]=$0 } END { start=n-19; if (start < 1) start=1; for (i=start; i<=n; ++i) print rows[i] }' "$BENCHMARK_LOG" 2>/dev/null || true)"
+  discard_count="$(echo "$all_discards" | grep -c . 2>/dev/null || echo 0)"
+  kept_count="$(echo "$all_kept" | grep -c . 2>/dev/null || echo 0)"
+  done_task_titles="$(find "$TASK_ROOT/done" -maxdepth 1 -name '*.md' -exec head -2 {} \; 2>/dev/null | grep '^# ' | sed 's/^# //' || true)"
   previous_summary=""
   if [[ -f "$LAST_MESSAGE_FILE" ]]; then
     previous_summary="$(tail -n 40 "$LAST_MESSAGE_FILE")"
@@ -105,7 +110,35 @@ Act as the optimization master for $ROOT_DIR.
 Your only job is to generate concrete worker tasks under:
 - $TASK_ROOT/pending
 
-Rules:
+## Critical: Diversity and Dead-End Avoidance
+
+Before generating tasks, you MUST:
+
+1. READ the full discard history below carefully. Count how many times each CATEGORY of idea has been tried and failed. Categories include things like "front-bucket tie-breaking", "TT move ordering", "heuristic weight tuning", "bomb bonus tuning", etc.
+
+2. DO NOT generate tasks in a category that has been tried and discarded 3+ times without a single keep. That vein is exhausted. Move on to fundamentally different approaches.
+
+3. Before writing tasks, RE-READ the source code. Run:
+   - cat src/gtsa.hpp (the search algorithm)
+   - cat src/board.h (the evaluation and move ordering)
+   - cat src/wordescape.cpp (the game state implementation)
+   Look for actual bottlenecks and unexplored opportunities, not just parameter tweaks on existing signals.
+
+4. Each batch of tasks must span at least 3 DIFFERENT categories. Never generate 2+ tasks that are variants of the same idea.
+
+## Idea Categories to Explore (rotate through these)
+
+Move-ordering tasks are only ONE category. Also consider:
+
+- **Search algorithm changes**: Late move reductions (search obviously bad moves to shallower depth). Aspiration windows around the iterative-deepening value. Multi-PV search to find backup lines. Null-move pruning or similar forward pruning.
+- **Evaluation function changes**: The goodness() function itself — how board positions are scored. New evaluation terms, reweighting existing ones. Piece-square style tables for Wordbase. Territory/connectivity evaluation.
+- **Move generation pruning**: Don't generate clearly terrible moves at all. Adaptive MAX_MOVES per ply. Futility pruning — skip moves that can't possibly raise alpha. History-based move generation cutoffs.
+- **Transposition table improvements**: Replacement policies (depth-preferred, always-replace, two-tier). Entry aging across iterative deepening iterations. Better hash distribution. Prefetching.
+- **Data structure and algorithmic improvements**: Faster board state representation. Incremental hash updates. Cheaper make/unmake move. Memory layout optimizations for cache friendliness.
+- **Time management**: Allocate more time to critical positions. Early termination when the best move is clearly dominant. Pondering (searching during opponent's turn in self-play).
+- **Game-specific strategic ideas**: Connectivity-based evaluation (are owned squares connected to edge?). Threat detection (opponent one move from winning). Defensive move bonuses. Bomb chain analysis.
+
+## Rules
 - Do not modify tracked source files.
 - Do not commit or push anything.
 - Generate at most $TASK_BATCH new task files, and only if pending tasks are below $MIN_PENDING.
@@ -115,21 +148,27 @@ Rules:
   - Concrete change to try
   - Exact benchmark commands
   - Keep/revert criteria
-- Prefer high-signal search and move-ordering ideas backed by the benchmark history.
-- Avoid ideas already discarded unless you have a clearly different angle.
 - Use concrete Wordbase examples in the task description when useful.
-- Every task must tell the worker to run ./scripts/run-benchmarks.sh profile first and then ./scripts/run-benchmarks.sh profile-suite before keeping a change.
-- Keep criteria should require a profile win and no obvious regression on the suite. Tiny profile wins with suite regressions should be discarded.
-- Task mix: aim for 3 conservative/static move-ordering ideas and 1 "zany" idea per batch. Zany ideas can include ML policy stubs, GPU-assisted evaluation, stochastic rollouts, bold pruning/ordering schemes, or parallelism experiments (e.g., parallel root move evaluation or speculative node expansion), but must still specify a minimal, testable change and the same benchmark gates.
+- Every task must tell the worker to run ./scripts/run-benchmarks.sh profile-suite as the PRIMARY benchmark gate. The worker should also run ./scripts/run-benchmarks.sh profile for additional signal, but keep/discard decisions should be based on the SUITE average, not one board.
+- Keep criteria: require a suite-wide average improvement (avg_total_nodes) with no individual board regressing badly, and no depth drops. Single-board-only wins that don't hold across the suite should be discarded.
+- Task mix: aim for tasks spanning 3-4 different categories. At most 1 task per batch should be a move-ordering heuristic tweak. At least 1 should be a search algorithm or evaluation change. At least 1 should be something the system has never tried before.
+
+## Statistics
+- Total kept: $kept_count
+- Total discarded: $discard_count
+- Hit rate: roughly $(( kept_count * 100 / (discard_count + kept_count + 1) ))%
 
 Current pending task count:
 - $pending_count
 
-Recent kept experiments:
-$recent_kept
+All kept experiments (the full win history — study what actually worked):
+$all_kept
 
-Recent discarded experiments:
+Last 20 discarded experiments (study patterns of what fails):
 $recent_discards
+
+All completed task titles (do not duplicate these):
+$done_task_titles
 
 Previous master summary:
 $previous_summary

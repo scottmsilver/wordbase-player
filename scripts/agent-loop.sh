@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CANONICAL_BENCHMARK_LOG="$ROOT_DIR/benchmark-progress.csv"
+CANONICAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$CANONICAL_ROOT"
+CANONICAL_BENCHMARK_LOG="$CANONICAL_ROOT/benchmark-progress.csv"
 export GIT_EDITOR=true
 export GIT_SEQUENCE_EDITOR=true
 export GIT_MERGE_AUTOEDIT=no
@@ -22,6 +23,7 @@ WORKER_NAME=""
 BENCHMARK_LOG=""
 REQUIRE_TASK=0
 FRESH_TREE=0
+LAST_WORKTREE_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -140,10 +142,15 @@ fi
 PROMPT_FILE="$STATE_DIR/prompt.txt"
 STOP_FILE="$STATE_DIR/STOP"
 LAST_MESSAGE_FILE="$STATE_DIR/last-message.txt"
+LAST_WORKTREE_FILE="$STATE_DIR/last-worktree.txt"
 mkdir -p "$STATE_DIR"
 
 if [[ -z "$BENCHMARK_LOG" ]]; then
   BENCHMARK_LOG="$CANONICAL_BENCHMARK_LOG"
+fi
+
+if [[ "$FRESH_TREE" -eq 1 ]]; then
+  BENCHMARK_LOG="$CANONICAL_ROOT/logs/agent-loop/$WORKER_NAME/benchmark-progress.csv"
 fi
 
 mkdir -p "$(dirname "$BENCHMARK_LOG")"
@@ -155,15 +162,17 @@ if [[ ! -f "$BENCHMARK_LOG" ]]; then
   fi
 fi
 
-if [[ -n "$TARGET_BRANCH" ]]; then
-  git fetch origin >/dev/null 2>&1 || true
-  git checkout -B "$TARGET_BRANCH" "$BASE_REF" >/dev/null
-fi
+if [[ "$FRESH_TREE" -eq 0 ]]; then
+  if [[ -n "$TARGET_BRANCH" ]]; then
+    git fetch origin >/dev/null 2>&1 || true
+    git checkout -B "$TARGET_BRANCH" "$BASE_REF" >/dev/null
+  fi
 
-CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "main" ]]; then
-  echo "Refusing to run worker loop on $CURRENT_BRANCH. Use --branch to create a scratch branch." >&2
-  exit 1
+  CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  if [[ "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "main" ]]; then
+    echo "Refusing to run worker loop on $CURRENT_BRANCH. Use --branch to create a scratch branch." >&2
+    exit 1
+  fi
 fi
 
 if [[ -n "$TASK_DIR" ]]; then
@@ -258,7 +267,7 @@ build_prompt() {
   local task_path="$1"
   local current_head benchmark_floor recent_kept recent_discards previous_summary task_body
 
-  current_head="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  current_head="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   benchmark_floor="$(tail -n 1 "$BENCHMARK_LOG" 2>/dev/null || true)"
   recent_kept="$(awk -F, 'NR>1 && $2=="kept" { rows[++n]=$0 } END { start=n-2; if (start < 1) start=1; for (i=start; i<=n; ++i) print rows[i] }' "$BENCHMARK_LOG" 2>/dev/null || true)"
   recent_discards="$(awk -F, 'NR>1 && $2=="discarded" { rows[++n]=$0 } END { start=n-4; if (start < 1) start=1; for (i=start; i<=n; ++i) print rows[i] }' "$BENCHMARK_LOG" 2>/dev/null || true)"
@@ -313,6 +322,39 @@ Your job in this iteration:
 EOF
 }
 
+cleanup_previous_worktree() {
+  if [[ ! -f "$LAST_WORKTREE_FILE" ]]; then
+    return 0
+  fi
+  local prev_root
+  prev_root="$(cat "$LAST_WORKTREE_FILE")"
+  if [[ -n "$prev_root" && -d "$prev_root" ]]; then
+    git -C "$CANONICAL_ROOT" worktree remove -f "$prev_root" >/dev/null 2>&1 || true
+    rm -rf "$prev_root" >/dev/null 2>&1 || true
+  fi
+  : >"$LAST_WORKTREE_FILE"
+}
+
+prepare_fresh_worktree() {
+  cleanup_previous_worktree
+
+  local stamp branch_prefix branch_name work_root
+  stamp="$(date +%Y%m%d-%H%M%S)-$ITERATION"
+  branch_prefix="${TARGET_BRANCH:-agent-fleet/${WORKER_NAME}}"
+  branch_name="${branch_prefix}-iter-${stamp}"
+  work_root="$CANONICAL_ROOT/.codex-workers/${WORKER_NAME}-iter-${stamp}"
+
+  git -C "$CANONICAL_ROOT" fetch origin >/dev/null 2>&1 || true
+  git -C "$CANONICAL_ROOT" worktree add -B "$branch_name" "$work_root" "$BASE_REF" >/dev/null
+
+  cmake -S "$work_root/src" -B "$work_root/build-release" -DCMAKE_BUILD_TYPE=Release >/dev/null
+  cmake --build "$work_root/build-release" --target perf-test -j4 >/dev/null
+
+  ROOT_DIR="$work_root"
+  CURRENT_BRANCH="$branch_name"
+  echo "$work_root" >"$LAST_WORKTREE_FILE"
+}
+
 maybe_commit_kept_result() {
   local last_meta status scenario change_ref
   if [[ ! -f "$BENCHMARK_LOG" ]]; then
@@ -330,15 +372,15 @@ maybe_commit_kept_result() {
     return 0
   fi
 
-  if [[ -z "$(git status --porcelain)" ]]; then
+  if [[ -z "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
     return 0
   fi
 
-  git add -A >/dev/null 2>&1 || true
+  git -C "$ROOT_DIR" add -A >/dev/null 2>&1 || true
   if [[ -f "$BENCHMARK_LOG" ]]; then
-    git add -f "$BENCHMARK_LOG" >/dev/null 2>&1 || true
+    git -C "$ROOT_DIR" add -f "$BENCHMARK_LOG" >/dev/null 2>&1 || true
   fi
-  if [[ -z "$(git diff --cached --name-only)" ]]; then
+  if [[ -z "$(git -C "$ROOT_DIR" diff --cached --name-only)" ]]; then
     return 0
   fi
 
@@ -348,8 +390,8 @@ maybe_commit_kept_result() {
   else
     commit_msg="Keep benchmark win"
   fi
-  git commit -m "$commit_msg" >/dev/null 2>&1 || return 0
-  git push origin "$CURRENT_BRANCH" >/dev/null 2>&1 || true
+  git -C "$ROOT_DIR" commit -m "$commit_msg" >/dev/null 2>&1 || return 0
+  git -C "$ROOT_DIR" push origin "$CURRENT_BRANCH" >/dev/null 2>&1 || true
 }
 
 ITERATION=1
@@ -391,9 +433,7 @@ while true; do
   fi
 
   if [[ "$FRESH_TREE" -eq 1 ]]; then
-    git fetch origin >/dev/null 2>&1 || true
-    git reset --hard "$BASE_REF" >/dev/null 2>&1 || true
-    git clean -fd >/dev/null 2>&1 || true
+    prepare_fresh_worktree
   fi
 
   build_prompt "$TASK_PATH"

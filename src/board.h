@@ -79,6 +79,11 @@ struct LegalWord {
   CoordinateList mWordSequence;
   int mMaximizerGoodness;
   int mMinimizerGoodness;
+  int mFutureMoveDiversityCount;
+  int mLongFutureMoveDiversityCount;
+  int mSquareWordCountTotal;
+  int mMaximizerSquareForwardReachTotal;
+  int mMinimizerSquareForwardReachTotal;
 
   int mRenumberedMaximizerGoodness;
   int mRenumberedMinimizerGoodness;
@@ -122,7 +127,8 @@ public:
       throw;
     }
     
-    std::shared_ptr<LegalWord> legalWord(new LegalWord({mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness, 0, 0}));
+    std::shared_ptr<LegalWord> legalWord(new LegalWord(
+      {mNextId++, word, wordSequence, maximizerGoodness, minimizerGoodness, 0, 0, 0, 0, 0, 0, 0}));
     
     mLegalWordMap.resize(legalWord->mId + 1);
     mEquivalentWordIds.resize(legalWord->mId + 1);
@@ -193,7 +199,30 @@ public:
     Goodness2(bool isMaximizer) : mIsMaximizer(isMaximizer) { }
     
     bool operator()(const std::shared_ptr<LegalWord>& i, const std::shared_ptr<LegalWord>& j) const {
-      return heuristicValue(i) > heuristicValue(j);
+      if (heuristicValue(i) != heuristicValue(j)) {
+        return heuristicValue(i) > heuristicValue(j);
+      }
+
+      // Break exact ties with the raw versions of the same board-derived signals already in the
+      // heuristic. Example: if "interrobang" and "glamorize" both round to the same divided bonus,
+      // prefer the lane that actually preserves more long follow-ups instead of leaving the order arbitrary.
+      if (i->mLongFutureMoveDiversityCount != j->mLongFutureMoveDiversityCount) {
+        return i->mLongFutureMoveDiversityCount > j->mLongFutureMoveDiversityCount;
+      }
+      if (i->mFutureMoveDiversityCount != j->mFutureMoveDiversityCount) {
+        return i->mFutureMoveDiversityCount > j->mFutureMoveDiversityCount;
+      }
+
+      const int iForwardReach = mIsMaximizer ? i->mMaximizerSquareForwardReachTotal : i->mMinimizerSquareForwardReachTotal;
+      const int jForwardReach = mIsMaximizer ? j->mMaximizerSquareForwardReachTotal : j->mMinimizerSquareForwardReachTotal;
+      if (iForwardReach != jForwardReach) {
+        return iForwardReach > jForwardReach;
+      }
+      if (i->mSquareWordCountTotal != j->mSquareWordCountTotal) {
+        return i->mSquareWordCountTotal > j->mSquareWordCountTotal;
+      }
+
+      return i->mId < j->mId;
     }
     
     int heuristicValue(const std::shared_ptr<LegalWord>& x) const {
@@ -456,18 +485,17 @@ private:
   void recomputeLegalWordGoodness() {
     for (LegalWordId legalWordId = 0; legalWordId < mLegalWordFactory.getSize(); ++legalWordId) {
       LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
-      legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence);
-      legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence);
-      // Two paths can touch similarly "good" squares but leave very different follow-up move sets.
-      // For example, one path may preserve starts for "stare", "stern", "sting", and "stone",
-      // while another mainly keeps variants of the same stem such as "glamorized"/"glamorizer".
-      const int diversityBonus = futureMoveDiversityBonus(legalWord.mWordSequence);
-      // Long follow-ups are rarer and more threatening, so reward broad long-word continuation sets separately.
-      const int longDiversityBonus = longFutureMoveDiversityBonus(legalWord.mWordSequence);
-      legalWord.mMaximizerGoodness += diversityBonus;
-      legalWord.mMinimizerGoodness += diversityBonus;
-      legalWord.mMaximizerGoodness += longDiversityBonus;
-      legalWord.mMinimizerGoodness += longDiversityBonus;
+      legalWord.mFutureMoveDiversityCount = futureMoveDiversityCount(legalWord.mWordSequence);
+      legalWord.mLongFutureMoveDiversityCount = longFutureMoveDiversityCount(legalWord.mWordSequence);
+      legalWord.mSquareWordCountTotal = squareWordCountTotal(legalWord.mWordSequence);
+      legalWord.mMaximizerSquareForwardReachTotal = squareForwardReachTotal(legalWord.mWordSequence, true);
+      legalWord.mMinimizerSquareForwardReachTotal = squareForwardReachTotal(legalWord.mWordSequence, false);
+      legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence)
+        + legalWord.mFutureMoveDiversityCount / kFutureMoveDiversityDivisor
+        + legalWord.mLongFutureMoveDiversityCount / kLongFutureMoveDiversityDivisor;
+      legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence)
+        + legalWord.mFutureMoveDiversityCount / kFutureMoveDiversityDivisor
+        + legalWord.mLongFutureMoveDiversityCount / kLongFutureMoveDiversityDivisor;
     }
   }
 
@@ -481,24 +509,36 @@ private:
   }
 
   int squareWordCountBonus(const CoordinateList& wordSequence) const {
-    int bonus = 0;
+    return squareWordCountTotal(wordSequence) / kSquareWordCountDivisor;
+  }
+
+  int squareWordCountTotal(const CoordinateList& wordSequence) const {
+    int total = 0;
     for (const auto& cell : wordSequence) {
-      bonus += mSquareWordCounts.get(cell.first, cell.second);
+      total += mSquareWordCounts.get(cell.first, cell.second);
     }
-    return bonus / kSquareWordCountDivisor;
+    return total;
   }
 
   int squareForwardReachBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
-    int bonus = 0;
+    return squareForwardReachTotal(wordSequence, isMaximizer) / kSquareForwardReachDivisor;
+  }
+
+  int squareForwardReachTotal(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int total = 0;
     const Grid<int, kBoardHeight, kBoardWidth>& squareForwardReach =
       isMaximizer ? mMaximizerSquareForwardReach : mMinimizerSquareForwardReach;
     for (const auto& cell : wordSequence) {
-      bonus += squareForwardReach.get(cell.first, cell.second);
+      total += squareForwardReach.get(cell.first, cell.second);
     }
-    return bonus / kSquareForwardReachDivisor;
+    return total;
   }
 
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
+    return futureMoveDiversityCount(wordSequence) / kFutureMoveDiversityDivisor;
+  }
+
+  int futureMoveDiversityCount(const CoordinateList& wordSequence) {
     // This is build-time work only: estimate how many distinct future starts this path unlocks.
     // Example: if the claimed squares leave both "stare" and "stone" available next turn, that is
     // better than leaving only the "glamorize" family, even if both paths look similarly advanced.
@@ -519,10 +559,14 @@ private:
       }
     }
 
-    return uniqueMoves / kFutureMoveDiversityDivisor;
+    return uniqueMoves;
   }
 
   int longFutureMoveDiversityBonus(const CoordinateList& wordSequence) {
+    return longFutureMoveDiversityCount(wordSequence) / kLongFutureMoveDiversityDivisor;
+  }
+
+  int longFutureMoveDiversityCount(const CoordinateList& wordSequence) {
     // Count only distinct long continuations so we do not overvalue paths that mostly preserve short cleanup words.
     ++mCurrentScratchGeneration;
     if (mCurrentScratchGeneration == 0) {
@@ -545,7 +589,7 @@ private:
       }
     }
 
-    return uniqueLongMoves / kLongFutureMoveDiversityDivisor;
+    return uniqueLongMoves;
   }
   int maximizerGoodness(const CoordinateList& wordSequence) const {
     int maximizerGoodness = 0;

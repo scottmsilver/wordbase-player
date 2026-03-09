@@ -63,6 +63,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$MODEL" ]]; then
+  MODEL="gpt-5.2-codex-high"
+fi
+if [[ -z "$MASTER_MODEL" ]]; then
+  MASTER_MODEL="$MODEL"
+fi
+
 mkdir -p "$WORKTREE_ROOT" "$TASK_ROOT/pending" "$TASK_ROOT/in-progress" "$TASK_ROOT/done" "$TASK_ROOT/failed" "$PID_DIR"
 
 launch_master() {

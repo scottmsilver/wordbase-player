@@ -108,6 +108,8 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
+trap 'echo "agent-loop exit rc=$? worker=$WORKER_NAME branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)" >&2' EXIT
+
 if [[ -z "$WORKER_NAME" ]]; then
   if [[ -n "$STATE_SUBDIR" ]]; then
     WORKER_NAME="$STATE_SUBDIR"
@@ -371,9 +373,13 @@ while true; do
     cp "$PROMPT_FILE" "${local_result_prefix}.prompt.txt"
     if [[ "$TASK_PATH" == *"/in-progress/"* ]]; then
       if [[ "$cmd_status" -eq 0 ]]; then
-        mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/done\/}"
+        if ! mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/done\/}"; then
+          echo "warning: failed to move task to done: $TASK_PATH" >&2
+        fi
       else
-        mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/failed\/}"
+        if ! mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/failed\/}"; then
+          echo "warning: failed to move task to failed: $TASK_PATH" >&2
+        fi
       fi
     fi
   fi
@@ -386,6 +392,7 @@ while true; do
     exit "$cmd_status"
   fi
 
+  echo "worker=$WORKER_NAME iteration=$ITERATION complete rc=$cmd_status sleeping=${INTERVAL_SECONDS}s" >&2
   ITERATION=$((ITERATION + 1))
   sleep "$INTERVAL_SECONDS"
 done

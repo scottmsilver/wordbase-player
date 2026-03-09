@@ -22,7 +22,13 @@ const int kWordLengthWeight = 16;
 const int kWordProgressWeight = 32;
 const int kBombTouchWeight = 96;
 const int kMegabombTouchWeight = 192;
+// Reward paths that claim squares which are strong future anchors in this board's legal-word graph.
+// Example: if one move claims cells whose start squares collectively have 200 legal starts on this board
+// and another claims cells with only 80, the first move usually leaves more follow-up options next turn.
 const int kSquareWordCountDivisor = 1;
+// Reward paths whose claimed squares unlock a broad set of distinct future starts, not just many overlapping ones.
+// Example: claiming three squares that together unlock {stare, stern, sting, stone} is better than
+// three squares that mostly unlock the same small family of words over and over.
 const int kFutureMoveDiversityDivisor = 2;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
@@ -414,6 +420,8 @@ private:
       LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
       legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence);
       legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence);
+      // Two paths can touch similarly "good" squares but leave very different follow-up move sets.
+      // For example, one path may unlock 40 distinct next-turn words while another only unlocks 15.
       const int diversityBonus = futureMoveDiversityBonus(legalWord.mWordSequence);
       legalWord.mMaximizerGoodness += diversityBonus;
       legalWord.mMinimizerGoodness += diversityBonus;
@@ -438,6 +446,9 @@ private:
   }
 
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
+    // This is build-time work only: estimate how many distinct future starts this path unlocks.
+    // Example: if a claimed path covers squares whose start sets union to 120 unique words, we give it
+    // more credit than a path whose claimed squares union to only 50 unique words.
     ++mCurrentScratchGeneration;
     if (mCurrentScratchGeneration == 0) {
       std::fill(mLegalWordScratchGeneration.begin(), mLegalWordScratchGeneration.end(), 0);
@@ -457,7 +468,6 @@ private:
 
     return uniqueMoves / kFutureMoveDiversityDivisor;
   }
-
   int maximizerGoodness(const CoordinateList& wordSequence) const {
     int maximizerGoodness = 0;
     int furthestRow = 0;

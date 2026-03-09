@@ -502,24 +502,33 @@ private:
     // This is build-time work only: estimate how many distinct future starts this path unlocks.
     // Example: if the claimed squares leave both "stare" and "stone" available next turn, that is
     // better than leaving only the "glamorize" family, even if both paths look similarly advanced.
-    ++mCurrentScratchGeneration;
-    if (mCurrentScratchGeneration == 0) {
-      std::fill(mLegalWordScratchGeneration.begin(), mLegalWordScratchGeneration.end(), 0);
-      mCurrentScratchGeneration = 1;
-    }
-
-    int uniqueMoves = 0;
+    // Weight each future word by the best claimed cell that preserves it rather than paying every
+    // preserving square equally. A word that stays alive through the middle of a PERILLED-style lane
+    // should count more than one that only survives through a shallow EEL pocket near our own edge.
+    std::unordered_map<LegalWordId, int> bestSupportByWord;
+    bestSupportByWord.reserve(wordSequence.size() * 8);
     for (const auto& cell : wordSequence) {
       const LegalWordList& legalWordList = mLegalWords.get(cell.first, cell.second);
+      const int cellSupport = std::min(
+        mMaximizerSquareForwardReach.get(cell.first, cell.second),
+        mMinimizerSquareForwardReach.get(cell.first, cell.second));
       for (auto legalWordId : legalWordList) {
-        if (mLegalWordScratchGeneration[legalWordId] != mCurrentScratchGeneration) {
-          mLegalWordScratchGeneration[legalWordId] = mCurrentScratchGeneration;
-          ++uniqueMoves;
+        auto bestSupportIt = bestSupportByWord.find(legalWordId);
+        if (bestSupportIt == bestSupportByWord.end()) {
+          bestSupportByWord.emplace(legalWordId, cellSupport);
+        } else if (cellSupport > bestSupportIt->second) {
+          bestSupportIt->second = cellSupport;
         }
       }
     }
 
-    return uniqueMoves / kFutureMoveDiversityDivisor;
+    const int supportThreshold = kBoardHeight / 4;
+    int weightedUniqueMoves = 0;
+    for (const auto& wordSupport : bestSupportByWord) {
+      weightedUniqueMoves += wordSupport.second >= supportThreshold ? 2 : 1;
+    }
+
+    return weightedUniqueMoves / (kFutureMoveDiversityDivisor * 2);
   }
 
   int longFutureMoveDiversityBonus(const CoordinateList& wordSequence) {

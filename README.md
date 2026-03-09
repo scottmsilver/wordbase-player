@@ -71,6 +71,32 @@ The current intended meanings are:
 - `long`: longer confirmation run with two warm-up turns
 - `short-no-tt`: same short baseline with the transposition table disabled
 - `profile`: repeated searches on the same post-warmup position so sampling profilers see steady-state search work instead of startup/setup
+
+Agent Loop
+
+To keep Codex iterating without manually re-prompting every turn, use:
+
+```bash
+./scripts/agent-loop.sh
+```
+
+Useful options:
+
+```bash
+./scripts/agent-loop.sh --once
+./scripts/agent-loop.sh --interval 5
+./scripts/agent-loop.sh --max-iterations 10
+./scripts/agent-loop.sh --model gpt-5
+```
+
+The loop writes iteration logs under `logs/agent-loop/` and stops cleanly if you create:
+
+```bash
+touch logs/agent-loop/STOP
+```
+
+The standing prompt is materialized to `logs/agent-loop/prompt.txt` at startup so you can inspect or edit the loop instructions.
+
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves

@@ -24,6 +24,7 @@ struct PerfOptions {
   int maxMovesPerPosition = 200;
   int maxDepth = 4;
   int maxTurns = 200;
+  int warmupTurns = 0;
   bool useTranspositionTable = true;
   bool printBoards = false;
 };
@@ -63,6 +64,7 @@ void printUsage(const char* argv0) {
     << "  --max-moves <count>      Max legal moves searched per position (default 200)\n"
     << "  --max-depth <depth>      Max iterative deepening depth (default 4)\n"
     << "  --max-turns <count>      Stop after this many plies (default 200)\n"
+    << "  --warmup-turns <count>   Play unmeasured warm-up plies before timing (default 0)\n"
     << "  --no-tt                  Disable the transposition table\n"
     << "  --print-boards           Print the board after each move\n";
 }
@@ -87,6 +89,8 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.maxDepth = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--max-turns" && index < argc) {
       options.maxTurns = std::stoi(argv[index++], nullptr, 0);
+    } else if (arg == "--warmup-turns" && index < argc) {
+      options.warmupTurns = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--no-tt") {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
@@ -95,6 +99,10 @@ PerfOptions parseArgs(int argc, char** argv) {
       printUsage(argv[0]);
       throw std::invalid_argument("Unknown or incomplete argument: " + arg);
     }
+  }
+
+  if (options.warmupTurns < 0) {
+    throw std::invalid_argument("--warmup-turns must be non-negative");
   }
 
   return options;
@@ -141,8 +149,13 @@ int main(int argc, char** argv) {
     algorithm.setTraceStream(nullptr);
 
     Timer gameTimer;
-    gameTimer.start();
     AggregateStats aggregateStats;
+    bool measuring = options.warmupTurns == 0;
+    bool measurementStarted = measuring;
+    if (measurementStarted) {
+      gameTimer.start();
+    }
+    int measuredTurns = 0;
 
     int turn = 0;
     while (turn < options.maxTurns && !state.is_terminal()) {
@@ -158,11 +171,16 @@ int main(int argc, char** argv) {
       WordBaseMove move = algorithm.get_move(&searchState);
       double moveSeconds = moveTimer.seconds_elapsed();
       const auto& searchStats = algorithm.getLastSearchStats();
-      aggregateStats.record(searchStats, legalMoves.size());
+
+      if (measuring) {
+        aggregateStats.record(searchStats, legalMoves.size());
+      }
 
       const LegalWord& legalWord = board.getLegalWord(move.mLegalWordId);
+      const bool isWarmupTurn = turn < options.warmupTurns;
       std::cout
-        << "turn " << turn + 1
+        << (isWarmupTurn ? "warmup" : "turn")
+        << " " << turn + 1
         << " player " << int(state.player_to_move)
         << " move " << legalWord.mWord
         << " path " << legalWord.mWordSequence
@@ -178,6 +196,15 @@ int main(int argc, char** argv) {
 
       state.make_move(move);
       ++turn;
+      if (measuring) {
+        ++measuredTurns;
+      } else if (turn >= options.warmupTurns) {
+        measuring = true;
+        measurementStarted = true;
+        measuredTurns = 0;
+        aggregateStats = AggregateStats();
+        gameTimer.start();
+      }
 
       if (options.printBoards) {
         std::cout << state << std::endl;
@@ -185,8 +212,10 @@ int main(int argc, char** argv) {
     }
 
     std::cout
-      << "summary turns=" << turn
-      << " elapsed=" << gameTimer.seconds_elapsed() << "s"
+      << "summary turns=" << measuredTurns
+      << " total_turns=" << turn
+      << " warmup_turns=" << options.warmupTurns
+      << " elapsed=" << (measurementStarted ? gameTimer.seconds_elapsed() : 0.0) << "s"
       << " terminal=" << (state.is_terminal() ? "true" : "false")
       << " winner=" << winnerText(state)
       << " goodness=" << state.get_goodness()

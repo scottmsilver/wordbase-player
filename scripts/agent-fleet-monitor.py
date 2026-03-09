@@ -405,19 +405,19 @@ def draw_screen(stdscr, interval: float) -> None:
         for worker in workers:
             state = worker.display_state
             state_text = f"{state} {spinner}" if state in ("active", "handoff") else state
-        lines.append((
-            f"{worker.name:<10} {state_text:<9} {format_age(worker.latest_activity_age_seconds):<4} "
-            f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
-            f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}",
-            color_pair_for_state(state),
-        ))
-        trend = worker.profile_trend
-        if worker.baseline_profile_nodes:
-            trend = f"{trend} base={worker.baseline_profile_nodes}"
-        if worker.recent_profile_nodes:
-            trend = f"{trend} last={worker.recent_profile_nodes[-1]}"
-        lines.append((f"  trend: {trend}", 0))
-        lines.append((f"  activity: {worker.latest_activity}", 0))
+            lines.append((
+                f"{worker.name:<10} {state_text:<9} {format_age(worker.latest_activity_age_seconds):<4} "
+                f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
+                f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}",
+                color_pair_for_state(state),
+            ))
+            trend = worker.profile_trend
+            if worker.baseline_profile_nodes:
+                trend = f"{trend} base={worker.baseline_profile_nodes}"
+            if worker.recent_profile_nodes:
+                trend = f"{trend} last={worker.recent_profile_nodes[-1]}"
+            lines.append((f"  trend: {trend}", 0))
+            lines.append((f"  activity: {worker.latest_activity}", 0))
 
         lines.append(("", 0))
         lines.append(("Legend: green=active, yellow=handoff/planning, cyan=done, red=stalled/failed", 0))

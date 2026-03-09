@@ -120,7 +120,7 @@ Rules:
 - Use concrete Wordbase examples in the task description when useful.
 - Every task must tell the worker to run ./scripts/run-benchmarks.sh profile first and then ./scripts/run-benchmarks.sh profile-suite before keeping a change.
 - Keep criteria should require a profile win and no obvious regression on the suite. Tiny profile wins with suite regressions should be discarded.
-- Task mix: aim for 3 conservative/static move-ordering ideas and 1 "zany" idea per batch. Zany ideas can include ML policy stubs, GPU-assisted evaluation, stochastic rollouts, or bold pruning/ordering schemes, but must still specify a minimal, testable change and the same benchmark gates.
+- Task mix: aim for 3 conservative/static move-ordering ideas and 1 "zany" idea per batch. Zany ideas can include ML policy stubs, GPU-assisted evaluation, stochastic rollouts, bold pruning/ordering schemes, or parallelism experiments (e.g., parallel root move evaluation or speculative node expansion), but must still specify a minimal, testable change and the same benchmark gates.
 
 Current pending task count:
 - $pending_count

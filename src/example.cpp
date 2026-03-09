@@ -1,6 +1,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <cstdint>
 
 #include "board.h"
 #include "easylogging++.h"
@@ -87,6 +88,74 @@ namespace {
       boost::hash_combine(seed, mDepthRemaining);
       boost::hash_combine(seed, player_to_move);
       return seed;
+    }
+  };
+
+  struct CollidingState : public State<CollidingState, TestMove> {
+    int mEval;
+    int mDepthRemaining;
+    size_t mHashValue;
+    uint64_t mVerificationKey;
+
+    CollidingState(char playerToMove, int eval, int depthRemaining, size_t hashValue, uint64_t verificationKey)
+      : State<CollidingState, TestMove>(playerToMove),
+        mEval(eval),
+        mDepthRemaining(depthRemaining),
+        mHashValue(hashValue),
+        mVerificationKey(verificationKey) {}
+
+    CollidingState clone() const override {
+      return *this;
+    }
+
+    int get_goodness() const override {
+      return mEval;
+    }
+
+    std::vector<TestMove> get_legal_moves(int max_moves = INF) const override {
+      if (mDepthRemaining == 0) {
+        return {};
+      }
+      return {TestMove(1), TestMove(2)};
+    }
+
+    char get_enemy(char player) const override {
+      return player == PLAYER_1 ? PLAYER_2 : PLAYER_1;
+    }
+
+    bool is_terminal() const override {
+      return mDepthRemaining == 0;
+    }
+
+    bool is_winner(char player) const override {
+      return false;
+    }
+
+    void make_move(const TestMove& move) override {
+      player_to_move = get_enemy(player_to_move);
+      mDepthRemaining -= 1;
+      mEval = (move.mId == 1) ? 10 : -10;
+    }
+
+    std::ostream& to_stream(std::ostream& os) const override {
+      os << "eval=" << mEval << " depth=" << mDepthRemaining;
+      return os;
+    }
+
+    bool operator==(const CollidingState& other) const override {
+      return player_to_move == other.player_to_move
+        && mEval == other.mEval
+        && mDepthRemaining == other.mDepthRemaining
+        && mHashValue == other.mHashValue
+        && mVerificationKey == other.mVerificationKey;
+    }
+
+    size_t hash() const override {
+      return mHashValue;
+    }
+
+    uint64_t tt_verification_key() const override {
+      return mVerificationKey;
     }
   };
 
@@ -307,6 +376,25 @@ namespace {
     state.make_move(moves[0]);
 
     EXPECT_EQ(state.hash(), state.computeHashFromState());
+    EXPECT_EQ(state.tt_verification_key(), state.computeVerificationKeyFromState());
+  }
+
+  TEST_F(FooTest, MinimaxRejectsTranspositionEntriesWithMismatchedVerificationKey) {
+    Minimax<CollidingState, TestMove> minimax(1.0, INF);
+    minimax.setMaxDepth(1);
+    minimax.setTraceStream(nullptr);
+
+    CollidingState firstState(PLAYER_1, 0, 1, 7, 101);
+    TestMove firstMove = minimax.get_move(&firstState);
+    ASSERT_EQ(firstMove.mId, 2);
+    ASSERT_EQ(minimax.getLastSearchStats().goodness, 10);
+
+    CollidingState collidingState(PLAYER_1, 0, 1, 7, 202);
+    TestMove secondMove = minimax.get_move(&collidingState);
+
+    EXPECT_EQ(secondMove.mId, 2);
+    EXPECT_EQ(minimax.getLastSearchStats().goodness, 10);
+    EXPECT_EQ(minimax.getLastSearchStats().leafs, 2);
   }
 
   TEST_F(FooTest, EquivalentLegalWordIdsMatchWordLookupRange) {

@@ -28,6 +28,7 @@
 #include <memory>
 #include <vector>
 #include <random>
+#include <cstdint>
 #include "easylogging++.h"
 
 
@@ -100,6 +101,7 @@ enum TTEntryType { EXACT_VALUE, LOWER_BOUND, UPPER_BOUND };
 template<class M>
 struct TTEntry {
   M move;
+  uint64_t verification_key;
   int depth;
   int value;
   TTEntryType value_type;
@@ -108,11 +110,11 @@ struct TTEntry {
   
   virtual ~TTEntry() {}
   
-  TTEntry(const M &move, int depth, int value, TTEntryType value_type) :
-  move(move), depth(depth), value(value), value_type(value_type) {}
+  TTEntry(const M &move, uint64_t verification_key, int depth, int value, TTEntryType value_type) :
+  move(move), verification_key(verification_key), depth(depth), value(value), value_type(value_type) {}
   
  std::ostream &to_stream(std::ostream &os) {
-    return os << "move: " << move << " depth: " << depth << " value: " << value << " value_type: " << value_type;
+	    return os << "move: " << move << " verification_key: " << verification_key << " depth: " << depth << " value: " << value << " value_type: " << value_type;
   }
   
   friend std::ostream &operator<<(std::ostream &os, const TTEntry &entry) {
@@ -196,6 +198,10 @@ struct State {
   virtual bool operator==(const S &other) const = 0;
   
   virtual size_t hash() const = 0;
+
+  virtual uint64_t tt_verification_key() const {
+    return static_cast<uint64_t>(hash());
+  }
 };
 
 template<class S, class M>
@@ -544,6 +550,9 @@ struct Minimax : public Algorithm<S, M> {
     if (it == transposition_table.end()) {
       return false;
     }
+    if (it->second.verification_key != state->tt_verification_key()) {
+      return false;
+    }
     entry = it->second;
     return true;
   }
@@ -564,7 +573,7 @@ struct Minimax : public Algorithm<S, M> {
     else {
       value_type = TTEntryType::EXACT_VALUE;
     }
-    TTEntry<M> entry = {best_move, depth, max_goodness, value_type};
+    TTEntry<M> entry = {best_move, state->tt_verification_key(), depth, max_goodness, value_type};
     add_tt_entry(state, entry);
   }
   

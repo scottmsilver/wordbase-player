@@ -121,22 +121,25 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   WordBaseGridState mState;
   std::vector<bool> mPlayedWords;
   size_t mHashValue;
+  uint64_t mTtVerificationKey;
   
   WordBaseState(BoardStatic* board, char playerToMove)
     : State<WordBaseState, WordBaseMove>(playerToMove),
       mBoard(board),
       mPlayedWords(mBoard->getLegalWordsSize(), false),
-      mHashValue(0) {
+      mHashValue(0),
+      mTtVerificationKey(0) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
     mHashValue = computeHashFromState();
+    mTtVerificationKey = computeVerificationKeyFromState();
   }
   
   // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
-  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue) {
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey) {
   }
   
   WordBaseState clone() const override {
@@ -158,18 +161,40 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     return static_cast<size_t>(value);
   }
 
+  static uint64_t mixVerificationToken(uint64_t value) {
+    value += 0x6a09e667f3bcc909ULL;
+    value = (value ^ (value >> 33)) * 0xff51afd7ed558ccdULL;
+    value = (value ^ (value >> 33)) * 0xc4ceb9fe1a85ec53ULL;
+    value ^= value >> 33;
+    return value;
+  }
+
   static size_t cellHashToken(int y, int x, char owner) {
     const uint64_t index = static_cast<uint64_t>(y * kBoardWidth + x);
     const uint64_t ownerValue = static_cast<uint64_t>(static_cast<unsigned char>(owner));
     return mixHashToken((index << 8) ^ ownerValue ^ 0x3141592653589793ULL);
   }
 
+  static uint64_t cellVerificationToken(int y, int x, char owner) {
+    const uint64_t index = static_cast<uint64_t>(y * kBoardWidth + x);
+    const uint64_t ownerValue = static_cast<uint64_t>(static_cast<unsigned char>(owner));
+    return mixVerificationToken((index << 8) ^ ownerValue ^ 0x243f6a8885a308d3ULL);
+  }
+
   static size_t playedWordHashToken(LegalWordId legalWordId) {
     return mixHashToken(static_cast<uint64_t>(legalWordId) ^ 0x2718281828459045ULL);
   }
 
+  static uint64_t playedWordVerificationToken(LegalWordId legalWordId) {
+    return mixVerificationToken(static_cast<uint64_t>(legalWordId) ^ 0x13198a2e03707344ULL);
+  }
+
   static size_t playerHashToken(char player) {
     return mixHashToken(static_cast<uint64_t>(static_cast<unsigned char>(player)) ^ 0xfeedfacecafebeefULL);
+  }
+
+  static uint64_t playerVerificationToken(char player) {
+    return mixVerificationToken(static_cast<uint64_t>(static_cast<unsigned char>(player)) ^ 0xa4093822299f31d0ULL);
   }
 
   void setCellState(int y, int x, char owner) {
@@ -179,8 +204,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
 
     mHashValue ^= cellHashToken(y, x, currentOwner);
+    mTtVerificationKey ^= cellVerificationToken(y, x, currentOwner);
     mState.set(y, x, owner);
     mHashValue ^= cellHashToken(y, x, owner);
+    mTtVerificationKey ^= cellVerificationToken(y, x, owner);
   }
 
   void setPlayedWord(LegalWordId legalWordId, bool played) {
@@ -189,6 +216,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
 
     mHashValue ^= playedWordHashToken(legalWordId);
+    mTtVerificationKey ^= playedWordVerificationToken(legalWordId);
     mPlayedWords[legalWordId] = played;
   }
 
@@ -198,8 +226,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     }
 
     mHashValue ^= playerHashToken(player_to_move);
+    mTtVerificationKey ^= playerVerificationToken(player_to_move);
     player_to_move = player;
     mHashValue ^= playerHashToken(player_to_move);
+    mTtVerificationKey ^= playerVerificationToken(player_to_move);
   }
 
   size_t computeHashFromState() const {
@@ -212,6 +242,21 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     for (size_t legalWordId = 0; legalWordId < mPlayedWords.size(); legalWordId++) {
       if (mPlayedWords[legalWordId]) {
         seed ^= playedWordHashToken(static_cast<LegalWordId>(legalWordId));
+      }
+    }
+    return seed;
+  }
+
+  uint64_t computeVerificationKeyFromState() const {
+    uint64_t seed = playerVerificationToken(player_to_move);
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        seed ^= cellVerificationToken(y, x, mState.get(y, x));
+      }
+    }
+    for (size_t legalWordId = 0; legalWordId < mPlayedWords.size(); legalWordId++) {
+      if (mPlayedWords[legalWordId]) {
+        seed ^= playedWordVerificationToken(static_cast<LegalWordId>(legalWordId));
       }
     }
     return seed;
@@ -526,6 +571,10 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   
   size_t hash() const override {
     return mHashValue;
+  }
+
+  uint64_t tt_verification_key() const override {
+    return mTtVerificationKey;
   }
   
   const std::vector<std::string> getAlreadyPlayed() const {

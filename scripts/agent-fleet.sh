@@ -83,7 +83,7 @@ launch_master() {
     cmd+=(--search)
   fi
 
-  nohup "${cmd[@]}" >"$ROOT_DIR/logs/agent-fleet/master-launcher.log" 2>&1 &
+  setsid "${cmd[@]}" </dev/null >"$ROOT_DIR/logs/agent-fleet/master-launcher.log" 2>&1 &
   echo $! >"$PID_DIR/master.pid"
   printf 'master pid %s\n' "$(cat "$PID_DIR/master.pid")"
 }
@@ -121,7 +121,7 @@ launch_worker() {
     cmd+=(--search)
   fi
 
-  nohup "${cmd[@]}" >"$worker_log" 2>&1 &
+  setsid "${cmd[@]}" </dev/null >"$worker_log" 2>&1 &
   echo $! >"$PID_DIR/$worker_name.pid"
   printf '%s pid %s\n' "$worker_name" "$(cat "$PID_DIR/$worker_name.pid")"
 }

@@ -448,17 +448,32 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       return;
     }
 
-    char visitedOwner = mState.get(y, x);
-    if ((visitedOwner & 0x8) == 0 && owner == visitedOwner) {
-      setCellState(y, x, visitedOwner | 0x8);
+    std::vector<std::pair<int, int> > stack;
+    stack.push_back(std::make_pair(y, x));
+    while (!stack.empty()) {
+      const std::pair<int, int> current = stack.back();
+      stack.pop_back();
 
-      markConnected(y - 1, x - 1, owner);
-      markConnected(y - 1, x, owner);
-      markConnected(y - 1, x + 1, owner);
-      markConnected(y, x - 1, owner);
-      markConnected(y, x + 1, owner);
-      markConnected(y + 1, x - 1, owner);
-      markConnected(y + 1, x, owner);      markConnected(y + 1, x + 1, owner);
+      const int currentY = current.first;
+      const int currentX = current.second;
+      if (currentY < 0 || currentY >= kBoardHeight || currentX < 0 || currentX >= kBoardWidth) {
+        continue;
+      }
+
+      const char visitedOwner = mState.get(currentY, currentX);
+      if ((visitedOwner & 0x8) != 0 || owner != visitedOwner) {
+        continue;
+      }
+
+      setCellState(currentY, currentX, visitedOwner | 0x8);
+
+      for (int deltaY = -1; deltaY <= 1; deltaY++) {
+        for (int deltaX = -1; deltaX <= 1; deltaX++) {
+          if (deltaY != 0 || deltaX != 0) {
+            stack.push_back(std::make_pair(currentY + deltaY, currentX + deltaX));
+          }
+        }
+      }
     }
   }
   

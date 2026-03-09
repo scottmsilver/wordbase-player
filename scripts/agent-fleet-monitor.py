@@ -3,8 +3,6 @@
 import argparse
 import csv
 import curses
-import glob
-import os
 import re
 import subprocess
 import time
@@ -34,17 +32,20 @@ class WorkerInfo:
     head: str
     dirty: int
     current_task: str
+    current_task_state: str
     latest_kept: str
     latest_discarded: str
     latest_activity: str
+    latest_activity_age_seconds: Optional[int]
+    display_state: str
     codex: ProcessInfo
 
 
 def run_cmd(args: List[str], cwd: Optional[Path] = None) -> str:
     try:
-      return subprocess.check_output(args, cwd=str(cwd) if cwd else None, text=True, stderr=subprocess.DEVNULL).strip()
+        return subprocess.check_output(args, cwd=str(cwd) if cwd else None, text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
-      return ""
+        return ""
 
 
 def parse_pid_file(pid_file: Path) -> ProcessInfo:
@@ -86,6 +87,25 @@ def find_codex_process(workspace: Path) -> ProcessInfo:
     return ProcessInfo(None, "idle", "")
 
 
+def file_age_seconds(path: Path) -> Optional[int]:
+    if not path.exists():
+        return None
+    try:
+        return max(0, int(time.time() - path.stat().st_mtime))
+    except OSError:
+        return None
+
+
+def format_age(age_seconds: Optional[int]) -> str:
+    if age_seconds is None:
+        return "-"
+    if age_seconds < 60:
+        return f"{age_seconds}s"
+    if age_seconds < 3600:
+        return f"{age_seconds // 60}m"
+    return f"{age_seconds // 3600}h"
+
+
 def queue_counts() -> Dict[str, int]:
     counts = {}
     for name in ("pending", "in-progress", "done", "failed"):
@@ -99,17 +119,17 @@ def latest_file_name(path: Path) -> str:
     return files[-1].name if files else "-"
 
 
-def latest_task_for_worker(worker_name: str) -> str:
+def latest_task_for_worker(worker_name: str) -> Tuple[str, str]:
     matches = sorted((TASK_DIR / "in-progress").glob(f"*--{worker_name}.md"))
     if matches:
-        return matches[-1].name
+        return matches[-1].name, "in-progress"
     matches = sorted((TASK_DIR / "done").glob(f"*--{worker_name}.md"))
     if matches:
-        return f"done:{matches[-1].name}"
+        return f"done:{matches[-1].name}", "done"
     matches = sorted((TASK_DIR / "failed").glob(f"*--{worker_name}.md"))
     if matches:
-        return f"failed:{matches[-1].name}"
-    return "-"
+        return f"failed:{matches[-1].name}", "failed"
+    return "-", "none"
 
 
 def read_benchmark_rows(csv_path: Path) -> Tuple[str, str]:
@@ -134,24 +154,41 @@ def read_benchmark_rows(csv_path: Path) -> Tuple[str, str]:
     return latest_kept, latest_discarded
 
 
-def latest_activity_line(worker_name: str) -> str:
+def latest_activity_line(worker_name: str) -> Tuple[str, Optional[int]]:
     log_path = FLEET_DIR / f"{worker_name}-launcher.log"
     if not log_path.exists():
-        return "-"
+        return "-", None
     try:
         lines = [line.strip() for line in log_path.read_text(errors="replace").splitlines() if line.strip()]
     except Exception:
-        return "-"
+        return "-", None
+    age_seconds = file_age_seconds(log_path)
     for line in reversed(lines):
         if '"agent_message"' in line:
             match = re.search(r'"text":"(.*)"', line)
             if match:
-                return match.group(1).replace('\\"', '"')[:120]
+                return match.group(1).replace('\\"', '"')[:120], age_seconds
         if '"command_execution"' in line and '"command":"' in line:
             match = re.search(r'"command":"(.*)"', line)
             if match:
-                return f"cmd: {match.group(1).replace('\\"', '"')[:108]}"
-    return lines[-1][:120] if lines else "-"
+                return f"cmd: {match.group(1).replace('\\"', '"')[:108]}", age_seconds
+        if '"turn.started"' in line:
+            return "turn started", age_seconds
+    return (lines[-1][:120] if lines else "-"), age_seconds
+
+
+def worker_display_state(task_state: str, codex: ProcessInfo, activity_age_seconds: Optional[int]) -> str:
+    if codex.pid:
+        return "active"
+    if task_state == "failed":
+        return "failed"
+    if task_state == "done":
+        return "done"
+    if task_state == "in-progress":
+        if activity_age_seconds is not None and activity_age_seconds <= 30:
+            return "handoff"
+        return "stalled"
+    return "idle"
 
 
 def worker_infos() -> List[WorkerInfo]:
@@ -164,6 +201,9 @@ def worker_infos() -> List[WorkerInfo]:
         head = run_cmd(["git", "-C", str(worktree), "rev-parse", "--short", "HEAD"]) or "unknown"
         dirty_out = run_cmd(["git", "-C", str(worktree), "status", "--short"])
         dirty = len([line for line in dirty_out.splitlines() if line.strip()])
+        current_task, current_task_state = latest_task_for_worker(name)
+        latest_activity, latest_activity_age_seconds = latest_activity_line(name)
+        codex = find_codex_process(worktree)
         kept, discarded = read_benchmark_rows(worktree / "benchmark-progress.csv")
         workers.append(
             WorkerInfo(
@@ -171,32 +211,53 @@ def worker_infos() -> List[WorkerInfo]:
                 branch=branch,
                 head=head,
                 dirty=dirty,
-                current_task=latest_task_for_worker(name),
+                current_task=current_task,
+                current_task_state=current_task_state,
                 latest_kept=kept,
                 latest_discarded=discarded,
-                latest_activity=latest_activity_line(name),
-                codex=find_codex_process(worktree),
+                latest_activity=latest_activity,
+                latest_activity_age_seconds=latest_activity_age_seconds,
+                display_state=worker_display_state(current_task_state, codex, latest_activity_age_seconds),
+                codex=codex,
             )
         )
     return workers
 
 
-def master_info() -> Tuple[ProcessInfo, ProcessInfo, str]:
+def master_info() -> Tuple[ProcessInfo, ProcessInfo, str, Optional[int]]:
     pid_info = parse_pid_file(PID_DIR / "master.pid")
     codex_info = find_codex_process(ROOT_DIR)
     last_message = FLEET_DIR / "master" / "last-message.txt"
     summary = "-"
+    age_seconds = file_age_seconds(last_message)
     if last_message.exists():
         lines = [line.strip() for line in last_message.read_text(errors="replace").splitlines() if line.strip()]
         if lines:
             summary = lines[-1][:140]
-    return pid_info, codex_info, summary
+    return pid_info, codex_info, summary, age_seconds
+
+
+def master_display_state(master_job: ProcessInfo, pending_count: int, master_note_age_seconds: Optional[int]) -> str:
+    if master_job.pid:
+        return "active"
+    if pending_count > 0 and master_note_age_seconds is not None and master_note_age_seconds <= 60:
+        return "planning"
+    if pending_count > 0:
+        return "idle"
+    return "quiet"
+
+
+def snapshot_data() -> Tuple[Dict[str, int], Tuple[ProcessInfo, ProcessInfo, str, Optional[int]], List[WorkerInfo]]:
+    counts = queue_counts()
+    master = master_info()
+    workers = worker_infos()
+    return counts, master, workers
 
 
 def snapshot_lines() -> List[str]:
-    counts = queue_counts()
-    master_pid, master_job, master_summary = master_info()
-    workers = worker_infos()
+    counts, master, workers = snapshot_data()
+    master_pid, master_job, master_summary, master_note_age_seconds = master
+    master_state = master_display_state(master_job, counts["pending"], master_note_age_seconds)
 
     lines = [
         f"Fleet Monitor  {time.strftime('%Y-%m-%d %H:%M:%S')}",
@@ -206,16 +267,17 @@ def snapshot_lines() -> List[str]:
         f"Latest done:    {latest_file_name(TASK_DIR / 'done')}",
         "",
         f"Master wrapper: {master_pid.state} pid={master_pid.pid or '-'}",
-        f"Master job:     {master_job.state} pid={master_job.pid or '-'}",
+        f"Master job:     {master_state} pid={master_job.pid or '-'} note_age={format_age(master_note_age_seconds)}",
         f"Master note:    {master_summary}",
         "",
         "Workers",
-        "name       job        branch                  head     dirty  current task                               latest kept              latest discard",
+        "name       state     age   branch                  head     dirty  current task                          latest kept              latest discard",
     ]
     for worker in workers:
         lines.append(
-            f"{worker.name:<10} {worker.codex.state:<10} {worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
-            f"{worker.current_task[:40]:<40} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}"
+            f"{worker.name:<10} {worker.display_state:<9} {format_age(worker.latest_activity_age_seconds):<4} "
+            f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
+            f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}"
         )
         lines.append(f"  activity: {worker.latest_activity}")
     lines.append("")
@@ -223,22 +285,85 @@ def snapshot_lines() -> List[str]:
     return lines
 
 
+def color_pair_for_state(state: str) -> int:
+    if state == "active":
+        return 1
+    if state in ("planning", "handoff"):
+        return 2
+    if state == "done":
+        return 3
+    if state in ("failed", "stalled"):
+        return 4
+    return 0
+
+
+def initialize_colors() -> None:
+    if not curses.has_colors():
+        return
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_YELLOW, -1)
+    curses.init_pair(3, curses.COLOR_CYAN, -1)
+    curses.init_pair(4, curses.COLOR_RED, -1)
+
+
 def draw_screen(stdscr, interval: float) -> None:
     curses.curs_set(0)
+    initialize_colors()
     stdscr.nodelay(True)
     stdscr.timeout(int(interval * 1000))
+    spinner_frames = "|/-\\"
+    tick = 0
     while True:
+        counts, master, workers = snapshot_data()
+        master_pid, master_job, master_summary, master_note_age_seconds = master
+        master_state = master_display_state(master_job, counts["pending"], master_note_age_seconds)
         stdscr.erase()
         max_y, max_x = stdscr.getmaxyx()
-        for row, line in enumerate(snapshot_lines()):
+        spinner = spinner_frames[tick % len(spinner_frames)]
+
+        lines: List[Tuple[str, int]] = [
+            (f"Fleet Monitor  {time.strftime('%Y-%m-%d %H:%M:%S')}", 0),
+            ("", 0),
+            (f"Queue  pending={counts['pending']}  in-progress={counts['in-progress']}  done={counts['done']}  failed={counts['failed']}", 0),
+            (f"Latest pending: {latest_file_name(TASK_DIR / 'pending')}", 0),
+            (f"Latest done:    {latest_file_name(TASK_DIR / 'done')}", 0),
+            ("", 0),
+            (f"Master wrapper: {master_pid.state} pid={master_pid.pid or '-'}", 0),
+            (f"Master job:     {master_state} {spinner if master_state in ('active', 'planning') else ' '} pid={master_job.pid or '-'} note_age={format_age(master_note_age_seconds)}", color_pair_for_state(master_state)),
+            (f"Master note:    {master_summary}", 0),
+            ("", 0),
+            ("Workers", 0),
+            ("name       state     age   branch                  head     dirty  current task                          latest kept              latest discard", 0),
+        ]
+
+        for worker in workers:
+            state = worker.display_state
+            state_text = f"{state} {spinner}" if state in ("active", "handoff") else state
+            lines.append((
+                f"{worker.name:<10} {state_text:<9} {format_age(worker.latest_activity_age_seconds):<4} "
+                f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
+                f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}",
+                color_pair_for_state(state),
+            ))
+            lines.append((f"  activity: {worker.latest_activity}", 0))
+
+        lines.append(("", 0))
+        lines.append(("Legend: green=active, yellow=handoff/planning, cyan=done, red=stalled/failed", 0))
+        lines.append(("Controls: q quit, r refresh", 0))
+
+        for row, (line, color_pair) in enumerate(lines):
             if row >= max_y:
                 break
-            stdscr.addnstr(row, 0, line, max_x - 1)
+            attr = curses.color_pair(color_pair) if color_pair else curses.A_NORMAL
+            stdscr.addnstr(row, 0, line, max_x - 1, attr)
         stdscr.refresh()
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             break
         if key in (ord("r"), ord("R"), -1):
+            tick += 1
             continue
 
 

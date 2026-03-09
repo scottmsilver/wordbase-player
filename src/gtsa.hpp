@@ -305,7 +305,8 @@ private:
   S& mStateToUndo;
 
 public:
-  StateUndoer(S& state) : mSavedState(state), mStateToUndo(state) {}
+  // Keep undo generic unless a measured hotspot justifies per-state specialization.
+  StateUndoer(S& state, const M&) : mSavedState(state), mStateToUndo(state) {}
   ~StateUndoer() { mStateToUndo = mSavedState; }
 };
 
@@ -488,7 +489,7 @@ struct Minimax : public Algorithm<S, M> {
       // Scope around StateUndoer is important here, so that it gets undone.
       // FIX-ME to some cool macro thing that makes that clearer.
       {
-	StateUndoer<S, M> undoer(*state);
+	StateUndoer<S, M> undoer(*state, move);
           
 	state->make_move(move);
 	const int goodness = -minimax(
@@ -714,7 +715,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
     for (M &move : legal_moves) {
-      StateUndoer<S,M> undoer(*state); {
+      StateUndoer<S,M> undoer(*state, move); {
 	state->make_move(move);
 	if (state->is_winner(current_player)) {
 	  return std::make_shared<M>(move);
@@ -731,7 +732,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
     auto legal_moves = state->get_legal_moves();
     assert(legal_moves.size() > 0);
     for (M &move : legal_moves) {
-      StateUndoer<S,M> undoer(*state); {
+      StateUndoer<S,M> undoer(*state, move); {
 	state->make_move(move);
 	if (state->is_winner(enemy)) {
 	  state->player_to_move = current_player;
@@ -784,7 +785,7 @@ struct MonteCarloTreeSearch : public Algorithm<S, M> {
       return DRAW_SCORE;
     }
     M move = get_default_policy_move(current);
-    StateUndoer<S,M> undoer(*current); {
+    StateUndoer<S,M> undoer(*current, move); {
       current->make_move(move);
       auto result = rollout(current, root);
       return result;

@@ -536,42 +536,6 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   }
 };
 
-template<>
-class StateUndoer<WordBaseState, WordBaseMove> {
-private:
-  WordBaseGridState mSavedGridState;
-  char mSavedPlayerToMove;
-  size_t mSavedHashValue;
-  std::vector<LegalWordId> mWordsMarkedPlayed;
-  WordBaseState& mStateToUndo;
-
-public:
-  StateUndoer(WordBaseState& state, const WordBaseMove& move)
-    : mSavedGridState(state.mState),
-      mSavedPlayerToMove(state.player_to_move),
-      mSavedHashValue(state.mHashValue),
-      mStateToUndo(state) {
-    const std::string& word = state.mBoard->getLegalWord(move.mLegalWordId).mWord;
-    std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(
-      state.mBoard->getLegalWordIds(word));
-    for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
-      if (!state.mPlayedWords[i->second]) {
-        mWordsMarkedPlayed.push_back(i->second);
-      }
-    }
-  }
-
-  ~StateUndoer() {
-    mStateToUndo.mState = mSavedGridState;
-    mStateToUndo.player_to_move = mSavedPlayerToMove;
-    mStateToUndo.mHashValue = mSavedHashValue;
-    for (auto legalWordId : mWordsMarkedPlayed) {
-      mStateToUndo.mPlayedWords[legalWordId] = false;
-    }
-  }
-};
-
-
 // Print out a move sequence.
 std::ostream& operator<<(std::ostream& os, const CoordinateList& foo) {
   bool first = true;

@@ -135,6 +135,37 @@ def latest_task_for_worker(worker_name: str) -> Tuple[str, str]:
     return "-", "none"
 
 
+def latest_task_idea(task_label: str) -> str:
+    if not task_label or task_label == "-":
+        return "-"
+    label = task_label
+    if label.startswith("done:") or label.startswith("failed:"):
+        label = label.split(":", 1)[1]
+    if label.endswith(".md"):
+        label = label[:-3]
+    task_path = (TASK_DIR / "pending" / f"{label}.md")
+    if not task_path.exists():
+        task_path = (TASK_DIR / "in-progress" / f"{label}.md")
+    if not task_path.exists():
+        task_path = (TASK_DIR / "done" / f"{label}.md")
+    if not task_path.exists():
+        task_path = (TASK_DIR / "failed" / f"{label}.md")
+    if not task_path.exists():
+        return label[:120]
+    try:
+        lines = task_path.read_text(errors="replace").splitlines()
+    except Exception:
+        return label[:120]
+    for line in lines:
+        if line.startswith("# Hypothesis"):
+            continue
+        if line.startswith("# Concrete change"):
+            break
+        if line.strip() and not line.startswith("#"):
+            return line.strip()[:120]
+    return label[:120]
+
+
 def read_benchmark_rows(csv_path: Path) -> Tuple[str, str]:
     latest_kept = "-"
     latest_discarded = "-"
@@ -341,6 +372,7 @@ def snapshot_lines() -> List[str]:
             f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
             f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}"
         )
+        lines.append(f"  idea: {latest_task_idea(worker.current_task)}")
         lines.append(f"  activity: {worker.latest_activity}")
     lines.append("")
     lines.append("Controls: q quit, r refresh")
@@ -417,6 +449,7 @@ def draw_screen(stdscr, interval: float) -> None:
             if worker.recent_profile_nodes:
                 trend = f"{trend} last={worker.recent_profile_nodes[-1]}"
             lines.append((f"  trend: {trend}", 0))
+            lines.append((f"  idea: {latest_task_idea(worker.current_task)}", 0))
             lines.append((f"  activity: {worker.latest_activity}", 0))
 
         lines.append(("", 0))

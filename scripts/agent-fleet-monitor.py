@@ -377,6 +377,7 @@ def draw_screen(stdscr, interval: float) -> None:
     stdscr.timeout(int(interval * 1000))
     spinner_frames = "|/-\\"
     tick = 0
+    scroll = 0
     while True:
         counts, master, workers = snapshot_data()
         master_pid, master_job, master_summary, master_note_age_seconds = master
@@ -419,9 +420,15 @@ def draw_screen(stdscr, interval: float) -> None:
 
         lines.append(("", 0))
         lines.append(("Legend: green=active, yellow=handoff/planning, cyan=done, red=stalled/failed", 0))
-        lines.append(("Controls: q quit, r refresh", 0))
+        lines.append(("Controls: q quit, r refresh, j/k or arrows scroll, PgUp/PgDn", 0))
+        total_lines = len(lines)
+        max_scroll = max(0, total_lines - max_y)
+        if scroll > max_scroll:
+            scroll = max_scroll
+        if scroll < 0:
+            scroll = 0
 
-        for row, (line, color_pair) in enumerate(lines):
+        for row, (line, color_pair) in enumerate(lines[scroll:scroll + max_y]):
             if row >= max_y:
                 break
             attr = curses.color_pair(color_pair) if color_pair else curses.A_NORMAL
@@ -430,9 +437,23 @@ def draw_screen(stdscr, interval: float) -> None:
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             break
-        if key in (ord("r"), ord("R"), -1):
+        if key in (ord("r"), ord("R")):
             tick += 1
-            continue
+        elif key in (ord("j"), curses.KEY_DOWN):
+            scroll += 1
+        elif key in (ord("k"), curses.KEY_UP):
+            scroll -= 1
+        elif key in (curses.KEY_NPAGE,):
+            scroll += max(1, max_y - 2)
+        elif key in (curses.KEY_PPAGE,):
+            scroll -= max(1, max_y - 2)
+        elif key in (curses.KEY_HOME,):
+            scroll = 0
+        elif key in (curses.KEY_END,):
+            scroll = max_scroll
+        else:
+            tick += 1
+        continue
 
 
 def main() -> None:

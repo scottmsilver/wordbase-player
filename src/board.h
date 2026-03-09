@@ -480,19 +480,10 @@ private:
     return false;
   }
 
-  int squareWordCountBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+  int squareWordCountBonus(const CoordinateList& wordSequence) const {
     int bonus = 0;
-    const Grid<int, kBoardHeight, kBoardWidth>& squareForwardReach =
-      isMaximizer ? mMaximizerSquareForwardReach : mMinimizerSquareForwardReach;
     for (const auto& cell : wordSequence) {
-      const int squareWordCount = mSquareWordCounts.get(cell.first, cell.second);
-      const int clampedForwardReach =
-        std::min(squareForwardReach.get(cell.first, cell.second), kSquareForwardReachDivisor);
-      // Dense cells should only keep their full raw-count tie-breaker when their nearby words also
-      // keep pushing forward. Example: the GLAMORIZE spine should keep full credit, while a shallow
-      // cleanup pocket like EEL gets only partial credit even if it has many short local words.
-      bonus += squareWordCount * (kSquareForwardReachDivisor + clampedForwardReach) /
-        (2 * kSquareForwardReachDivisor);
+      bonus += mSquareWordCounts.get(cell.first, cell.second);
     }
     return bonus / kSquareWordCountDivisor;
   }
@@ -572,7 +563,7 @@ private:
     if (pathTouches(wordSequence, mMegabombs)) {
       maximizerGoodness += kMegabombTouchWeight;
     }
-    maximizerGoodness += squareWordCountBonus(wordSequence, true);
+    maximizerGoodness += squareWordCountBonus(wordSequence);
     maximizerGoodness += squareForwardReachBonus(wordSequence, true);
 
     return maximizerGoodness;
@@ -594,7 +585,7 @@ private:
     if (pathTouches(moveSequence, mMegabombs)) {
       minimizerGoodness += kMegabombTouchWeight;
     }
-    minimizerGoodness += squareWordCountBonus(moveSequence, false);
+    minimizerGoodness += squareWordCountBonus(moveSequence);
     minimizerGoodness += squareForwardReachBonus(moveSequence, false);
 
     return minimizerGoodness;

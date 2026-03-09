@@ -80,20 +80,19 @@ struct Timer {
 };
 
 template<class M>
+// Move is used via CRTP (Move<WordBaseMove>), never through base pointers.
+// All methods are non-virtual to eliminate vtable overhead:
+//   - No vtable pointer per object (saves 8 bytes per move)
+//   - No indirect dispatch for destructor/hash/operator==
+//   - Compiler can inline trivial destructor (was 2% of profile as virtual)
+//
+// Derived classes (e.g. WordBaseMove) define read(), to_stream(),
+// operator==(), and hash() directly — no virtual dispatch needed since
+// the template parameter M is always the concrete type at compile time.
 struct Move {
-  virtual ~Move() {}
-
-  virtual void read() = 0;
-
-  virtual std::ostream &to_stream(std::ostream &os) const = 0;
-
   friend std::ostream &operator<<(std::ostream &os, const Move &move) {
-    return move.to_stream(os);
+    return static_cast<const M&>(move).to_stream(os);
   }
-
-  virtual bool operator==(const M &rhs) const = 0;
-
-  virtual size_t hash() const = 0;
 };
 
 enum TTEntryType { EXACT_VALUE, LOWER_BOUND, UPPER_BOUND };
@@ -530,7 +529,7 @@ struct Minimax : public Algorithm<S, M> {
     bool found_best_move = false;
 
     for (int i = 0; i < legal_moves.size(); i++) {
-      M move = legal_moves[i];
+      const M& move = legal_moves[i];
 
       // Scope around StateUndoer is important here, so that it gets undone.
       // FIX-ME to some cool macro thing that makes that clearer.

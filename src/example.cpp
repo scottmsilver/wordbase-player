@@ -23,13 +23,13 @@ namespace {
     TestMove() = default;
     explicit TestMove(int id) : mId(id) {}
 
-    void read() override {}
-    std::ostream& to_stream(std::ostream& os) const override {
+    void read() {}
+    std::ostream& to_stream(std::ostream& os) const {
       os << "tm(" << mId << ")";
       return os;
     }
-    bool operator==(const TestMove& rhs) const override { return mId == rhs.mId; }
-    size_t hash() const override { return std::hash<int>()(mId); }
+    bool operator==(const TestMove& rhs) const { return mId == rhs.mId; }
+    size_t hash() const { return std::hash<int>()(mId); }
   };
 
   struct TestState : public State<TestState, TestMove> {
@@ -236,7 +236,7 @@ namespace {
     WordDictionary wd(dictionaryFileContents);
     BoardStatic board("caorsorbafal*sutseidnercbnolecavksidlvrtselruamasiuxigdbrsyngoenerhaneodrosmtsihlaltdymecrescehudndmnefingelermaeamoksbaoflbdecuhlg", wd);
     WordBaseState state(&board, PLAYER_1);
-    
+
     const LegalWordList& wordList = board.getLegalWords(0, 0);
     EXPECT_EQ(wordList.size(), 1);
     const LegalWord& legalWord = board.getLegalWord(wordList[0]);

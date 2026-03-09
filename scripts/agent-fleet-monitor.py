@@ -121,6 +121,10 @@ def latest_file_name(path: Path) -> str:
     files = sorted(path.glob("*.md")) if path.exists() else []
     return files[-1].name if files else "-"
 
+def oldest_file_name(path: Path) -> str:
+    files = sorted(path.glob("*.md")) if path.exists() else []
+    return files[0].name if files else "-"
+
 
 def latest_task_for_worker(worker_name: str) -> Tuple[str, str]:
     matches = sorted((TASK_DIR / "in-progress").glob(f"*--{worker_name}.md"))
@@ -374,6 +378,9 @@ def snapshot_lines() -> List[str]:
             f"{worker.branch:<22} {worker.head:<8} {worker.dirty:<5} "
             f"{worker.current_task[:36]:<36} {worker.latest_kept[:24]:<24} {worker.latest_discarded[:24]:<24}"
         )
+        lines.append(f"  remaining: {counts['pending']} pending (shared)")
+        if worker.current_task == "-":
+            lines.append(f"  next: {oldest_file_name(TASK_DIR / 'pending')}")
         lines.append(f"  idea: {latest_task_idea(worker.current_task)}")
         lines.append(f"  activity: {worker.latest_activity}")
     lines.append("")
@@ -451,6 +458,9 @@ def draw_screen(stdscr, interval: float) -> None:
             if worker.recent_profile_nodes:
                 trend = f"{trend} last={worker.recent_profile_nodes[-1]}"
             lines.append((f"  trend: {trend}", 0))
+            lines.append((f"  remaining: {counts['pending']} pending (shared)", 0))
+            if worker.current_task == "-":
+                lines.append((f"  next: {oldest_file_name(TASK_DIR / 'pending')}", 0))
             lines.append((f"  idea: {latest_task_idea(worker.current_task)}", 0))
             lines.append((f"  activity: {worker.latest_activity}", 0))
 

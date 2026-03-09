@@ -17,7 +17,6 @@
  */
 
 #include <algorithm>
-#include <boost/dynamic_bitset.hpp>
 #include <boost/format.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
@@ -289,39 +288,7 @@ struct Goodness2 {
 };
 
 
-// State of Wordbase game.
-// Fixed-capacity bitset that avoids heap allocation. Max 8192 bits (1KB).
-struct InlineBitset {
-  static constexpr int kMaxWords = 128;  // 128 * 64 = 8192 bits
-  uint64_t words[kMaxWords];
-  int size_bits;
-
-  InlineBitset() : size_bits(0) { memset(words, 0, sizeof(words)); }
-  explicit InlineBitset(int n) : size_bits(n) { memset(words, 0, sizeof(words)); }
-
-  InlineBitset(const InlineBitset& rhs) : size_bits(rhs.size_bits) {
-    int nwords = (size_bits + 63) >> 6;
-    memcpy(words, rhs.words, nwords * 8);
-  }
-  InlineBitset& operator=(const InlineBitset& rhs) {
-    size_bits = rhs.size_bits;
-    int nwords = (size_bits + 63) >> 6;
-    memcpy(words, rhs.words, nwords * 8);
-    return *this;
-  }
-
-  bool operator[](int i) const { return (words[i >> 6] >> (i & 63)) & 1; }
-  void set(int i, bool v) {
-    if (v) words[i >> 6] |= (1ULL << (i & 63));
-    else words[i >> 6] &= ~(1ULL << (i & 63));
-  }
-  int size() const { return size_bits; }
-  bool operator==(const InlineBitset& rhs) const {
-    if (size_bits != rhs.size_bits) return false;
-    int nwords = (size_bits + 63) >> 6;
-    return memcmp(words, rhs.words, nwords * 8) == 0;
-  }
-};
+// InlineBitset is defined in inline-bitset.h (shared with board.h).
 
 struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   BoardStatic* mBoard;
@@ -606,44 +573,40 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // word may appear through multiple paths.
   // Also note that words which are already played are excluded.
   std::vector<WordBaseMove> get_legal_moves2(int max_moves, const char* filter) const {
-    // Reuse a static bitset to avoid heap allocation per call.
-    static boost::dynamic_bitset<> validWordBits;
+    static InlineBitset validWordBits;
     const int legalWordsSize = mBoard->getLegalWordsSize();
-    validWordBits.resize(legalWordsSize);
-    validWordBits.reset();
+    validWordBits = InlineBitset(legalWordsSize);
 
-    // For each letter owned by the current player find candidate words OR them all together
-    // They are implicitly in "order" so this effectively sorts them too.
+    const bool isMaximizer = (this->player_to_move == PLAYER_1);
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         if (mState.get(y, x) == player_to_move) {
           const auto& legalWords = mBoard->getLegalWords(y, x);
-          const auto& wordBits = legalWords.wordBits(this->player_to_move == PLAYER_1);
+          const auto& wordBits = legalWords.wordBits(isMaximizer);
           if (wordBits.size() != 0) {
-            validWordBits |= wordBits;
+            validWordBits.or_with(wordBits);
           }
         }
       }
     }
 
-    // When max_moves is bounded (the common case during search), skip the
-    // expensive count() and just collect up to max_moves.
-    const size_t maxMoveCount = max_moves == INF
-      ? validWordBits.count()
-      : static_cast<size_t>(max_moves);
+    const int nwords = (legalWordsSize + 63) >> 6;
+    const int maxMoveCount = (max_moves == INF) ? legalWordsSize : max_moves;
     std::vector<WordBaseMove> moves;
-    moves.reserve(maxMoveCount);
 
-    // Iterate from set bit to set bit, each representing a legal word in our set.
-    for (size_t renumberedGoodness = validWordBits.find_first(); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
-      LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
-
-      // Ensure already played words are ignored.
-      if (!mPlayedWords[legalWordId]) {
-        if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
-          moves.push_back(WordBaseMove(legalWordId));
-          if (moves.size() == maxMoveCount) {
-            break;
+    for (int w = 0; w < nwords; w++) {
+      uint64_t bits = validWordBits.words[w];
+      while (bits) {
+        int bit = __builtin_ctzll(bits);
+        int renumberedGoodness = w * 64 + bit;
+        bits &= bits - 1;
+        LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, isMaximizer);
+        if (!mPlayedWords[legalWordId]) {
+          if (filter == NULL || mBoard->getLegalWord(legalWordId).mWord.compare(filter) == 0) {
+            moves.push_back(WordBaseMove(legalWordId));
+            if (static_cast<int>(moves.size()) >= maxMoveCount) {
+              return moves;
+            }
           }
         }
       }
@@ -654,34 +617,47 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
   // Fill a caller-provided vector, reusing its heap allocation across calls.
   void fill_legal_moves(std::vector<WordBaseMove>& out, int max_moves) const override {
-    static boost::dynamic_bitset<> validWordBits;
+    // Collect all legal words reachable from owned cells into a bitset, then
+    // iterate in goodness order (best-first).
+    //
+    // Uses InlineBitset (stack-allocated, 1KB) for both the accumulator and
+    // the per-cell word bitsets, keeping all OR operations in L1/L2 cache.
+    // Previously used boost::dynamic_bitset (heap-allocated), where ~65 ORs
+    // of ~1KB bitsets = ~65KB of heap memory traffic per call.
+    static InlineBitset validWordBits;
     const int legalWordsSize = mBoard->getLegalWordsSize();
-    validWordBits.resize(legalWordsSize);
-    validWordBits.reset();
+    validWordBits = InlineBitset(legalWordsSize);
 
+    const bool isMaximizer = (this->player_to_move == PLAYER_1);
     for (int y = 0; y < kBoardHeight; y++) {
       for (int x = 0; x < kBoardWidth; x++) {
         if (mState.get(y, x) == player_to_move) {
           const auto& legalWords = mBoard->getLegalWords(y, x);
-          const auto& wordBits = legalWords.wordBits(this->player_to_move == PLAYER_1);
+          const auto& wordBits = legalWords.wordBits(isMaximizer);
           if (wordBits.size() != 0) {
-            validWordBits |= wordBits;
+            validWordBits.or_with(wordBits);
           }
         }
       }
     }
 
     out.clear();
-    const size_t maxMoveCount = max_moves == INF
-      ? validWordBits.count()
-      : static_cast<size_t>(max_moves);
+    const int nwords = (legalWordsSize + 63) >> 6;
+    int count = 0;
+    const int maxMoveCount = (max_moves == INF) ? legalWordsSize : max_moves;
 
-    for (size_t renumberedGoodness = validWordBits.find_first(); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
-      LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
-      if (!mPlayedWords[legalWordId]) {
-        out.push_back(WordBaseMove(legalWordId));
-        if (out.size() == maxMoveCount) {
-          break;
+    for (int w = 0; w < nwords; w++) {
+      uint64_t bits = validWordBits.words[w];
+      while (bits) {
+        int bit = __builtin_ctzll(bits);
+        int renumberedGoodness = w * 64 + bit;
+        bits &= bits - 1;
+        LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, isMaximizer);
+        if (!mPlayedWords[legalWordId]) {
+          out.push_back(WordBaseMove(legalWordId));
+          if (++count >= maxMoveCount) {
+            return;
+          }
         }
       }
     }

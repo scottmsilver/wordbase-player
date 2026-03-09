@@ -1,8 +1,6 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include <boost/dynamic_bitset.hpp>
-
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -13,6 +11,7 @@
 
 #include "coordinate-list.h"
 #include "grid.h"
+#include "inline-bitset.h"
 #include "string-util.h"
 #include "word-dictionary.h"
 
@@ -243,17 +242,20 @@ public:
 // A list of legal words, typically for a position in the board.
 class LegalWordList  {
 private:
-  // The kth bit is set for all k where k is the set of renumbered (unique) minimizer (or maximizer) goodness values for each legal word.
-  // In other words, if the word at (0,0),(1,0),(2,0) had a renumber minimizer (or maximizer) goodness value of 3, then the 3rd bit in the set
-  // would be set.
-  boost::dynamic_bitset<> mMinimizerWordIdBits;
-  boost::dynamic_bitset<> mMaximizerWordIdBits;
+  // The kth bit is set for all k where k is the set of renumbered (unique)
+  // minimizer (or maximizer) goodness values for each legal word at this cell.
+  // Used in fill_legal_moves: OR all per-cell bitsets to get the set of all
+  // playable words, then iterate in goodness order (best-first).
+  // Uses InlineBitset (stack-allocated) instead of boost::dynamic_bitset
+  // (heap-allocated) to keep OR operations in L1/L2 cache.
+  InlineBitset mMinimizerWordIdBits;
+  InlineBitset mMaximizerWordIdBits;
 
   // The set of LegalWordIds at this position.
   std::vector<int> mLegalWordIds;
 
 public:
-  LegalWordList() : mMinimizerWordIdBits(0), mMaximizerWordIdBits(0) {
+  LegalWordList() {
   }
 
   std::vector<int>::const_iterator begin() const { return mLegalWordIds.begin(); }
@@ -261,15 +263,17 @@ public:
   size_t size() const { return mLegalWordIds.size(); }
   LegalWordId operator[](size_t index) const { return mLegalWordIds[index]; }
 
-  const boost::dynamic_bitset<>& wordBits(bool isMaximizer) const {
+  const InlineBitset& wordBits(bool isMaximizer) const {
     return isMaximizer ? mMaximizerWordIdBits : mMinimizerWordIdBits;
   }
 
   void updateRenumberedGoodnessBits(int renumberedMaximizerGoodness, int renumberedMinimizerGoodness, int maxBits) {
-    mMinimizerWordIdBits.resize(maxBits);
-    mMaximizerWordIdBits.resize(maxBits);
-    mMaximizerWordIdBits[renumberedMaximizerGoodness] = 1;
-    mMinimizerWordIdBits[renumberedMinimizerGoodness] = 1;
+    if (mMinimizerWordIdBits.size() == 0) {
+      mMinimizerWordIdBits = InlineBitset(maxBits);
+      mMaximizerWordIdBits = InlineBitset(maxBits);
+    }
+    mMaximizerWordIdBits.set(renumberedMaximizerGoodness, true);
+    mMinimizerWordIdBits.set(renumberedMinimizerGoodness, true);
   }
 
   void push_back(LegalWordId legalWordId) {

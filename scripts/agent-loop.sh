@@ -153,7 +153,65 @@ if [[ -n "$TASK_DIR" ]]; then
   mkdir -p "$TASK_DIR/pending" "$TASK_DIR/in-progress" "$TASK_DIR/done" "$TASK_DIR/failed"
 fi
 
+worker_workspace() {
+  local worker_name="$1"
+  if [[ "$worker_name" == "$WORKER_NAME" ]]; then
+    printf '%s\n' "$ROOT_DIR"
+  else
+    printf '%s/.codex-workers/%s\n' "$(dirname "$ROOT_DIR")" "$worker_name"
+  fi
+}
+
+worker_has_live_codex() {
+  local worker_name="$1"
+  local workspace
+  workspace="$(worker_workspace "$worker_name")"
+  pgrep -af 'codex exec -C ' \
+    | awk -v workspace="$workspace" '
+        {
+          for (i = 1; i <= NF; ++i) {
+            if ($i == "-C" && (i + 1) <= NF && $(i + 1) == workspace) {
+              found = 1;
+              exit;
+            }
+          }
+        }
+        END { exit(found ? 0 : 1) }
+      ' >/dev/null 2>&1
+}
+
+reclaim_stale_tasks() {
+  if [[ -z "$TASK_DIR" ]]; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  local stale_file
+  for stale_file in "$TASK_DIR"/in-progress/*.md; do
+    local stale_base stale_name stale_worker restored_name restored_path
+    stale_base="$(basename "$stale_file")"
+    stale_name="${stale_base%.md}"
+    stale_worker="${stale_name##*--}"
+    if [[ -z "$stale_worker" || "$stale_worker" == "$stale_name" ]]; then
+      continue
+    fi
+    if worker_has_live_codex "$stale_worker"; then
+      continue
+    fi
+
+    restored_name="${stale_name%--$stale_worker}.md"
+    restored_path="$TASK_DIR/pending/$restored_name"
+    if [[ -e "$restored_path" ]]; then
+      restored_path="$TASK_DIR/pending/${restored_name%.md}-reclaimed-$(date +%s).md"
+    fi
+    mv "$stale_file" "$restored_path"
+  done
+  shopt -u nullglob
+}
+
 claim_task() {
+  reclaim_stale_tasks
+
   if [[ -n "$TASK_FILE" ]]; then
     if [[ -f "$TASK_FILE" ]]; then
       printf '%s\n' "$TASK_FILE"
@@ -292,20 +350,40 @@ while true; do
 
   printf 'Starting worker %s iteration %d at %s\n' "$WORKER_NAME" "$ITERATION" "$(date -Iseconds)"
   printf 'Prompt file: %s\n' "$PROMPT_FILE"
+  set +e
   "${CMD[@]}" - <"$PROMPT_FILE" | tee "$ITERATION_PREFIX.jsonl"
-  cp "$LAST_MESSAGE_FILE" "$ITERATION_PREFIX.txt"
+  cmd_status=${PIPESTATUS[0]}
+  set -e
+
+  if [[ -f "$LAST_MESSAGE_FILE" ]]; then
+    cp "$LAST_MESSAGE_FILE" "$ITERATION_PREFIX.txt"
+  else
+    : >"$ITERATION_PREFIX.txt"
+  fi
 
   if [[ -n "$TASK_PATH" && -f "$TASK_PATH" ]]; then
     local_result_prefix="$STATE_DIR/results-$(basename "${TASK_PATH%.md}")"
-    cp "$LAST_MESSAGE_FILE" "${local_result_prefix}.txt"
+    if [[ -f "$LAST_MESSAGE_FILE" ]]; then
+      cp "$LAST_MESSAGE_FILE" "${local_result_prefix}.txt"
+    else
+      : >"${local_result_prefix}.txt"
+    fi
     cp "$PROMPT_FILE" "${local_result_prefix}.prompt.txt"
     if [[ "$TASK_PATH" == *"/in-progress/"* ]]; then
-      mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/done\/}"
+      if [[ "$cmd_status" -eq 0 ]]; then
+        mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/done\/}"
+      else
+        mv "$TASK_PATH" "${TASK_PATH/\/in-progress\//\/failed\/}"
+      fi
     fi
   fi
 
+  if [[ "$cmd_status" -ne 0 ]]; then
+    printf 'Worker %s iteration %d failed with exit code %d\n' "$WORKER_NAME" "$ITERATION" "$cmd_status" >&2
+  fi
+
   if [[ "$ONCE" -eq 1 ]]; then
-    exit 0
+    exit "$cmd_status"
   fi
 
   ITERATION=$((ITERATION + 1))

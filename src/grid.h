@@ -8,10 +8,10 @@
 template<class T, int H, int W> class Grid {
 public:
   typedef std::array<T, H * W> Container;
-  
+
   // Initialize GridState by copying the underlying contents.
   Grid(const Grid& state) : mState(state.mState) {}
-  
+
   // Underlying contents have undefined value.
   Grid() {}
 
@@ -22,7 +22,7 @@ public:
   typename Container::const_iterator end() const { return mState.end(); }
   void fill(const T &value) { mState.fill(value); }
   bool operator==(const Grid<T, H, W>& rhs) const { return mState == rhs.mState;}
-  
+
 private:
   Container mState;
   T& operator[](int pos) const { return mState[pos]; }

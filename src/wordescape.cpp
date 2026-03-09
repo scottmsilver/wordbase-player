@@ -22,6 +22,7 @@
 #include <boost/functional/hash.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <regex>
 #include <unordered_map>
@@ -119,17 +120,23 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   BoardStatic* mBoard;
   WordBaseGridState mState;
   std::vector<bool> mPlayedWords;
+  size_t mHashValue;
   
-  WordBaseState(BoardStatic* board, char playerToMove) : State<WordBaseState, WordBaseMove>(playerToMove), mBoard(board), mPlayedWords(mBoard->getLegalWordsSize(), false) {
+  WordBaseState(BoardStatic* board, char playerToMove)
+    : State<WordBaseState, WordBaseMove>(playerToMove),
+      mBoard(board),
+      mPlayedWords(mBoard->getLegalWordsSize(), false),
+      mHashValue(0) {
     putBomb(board->getBombs(), false);
     putBomb(board->getMegabombs(), true);
+    mHashValue = computeHashFromState();
   }
   
   // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
-  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords) {
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue) {
   }
   
   WordBaseState clone() const override {
@@ -139,8 +146,75 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // Place bombs at each point in the supplied sequence.
   void putBomb(CoordinateList sequence, bool megaBomb) {
     for (auto&& bombPlace : sequence) {
-      mState.set(bombPlace.first, bombPlace.second, megaBomb ? PLAYER_MEGABOMB : PLAYER_BOMB);
+      setCellState(bombPlace.first, bombPlace.second, megaBomb ? PLAYER_MEGABOMB : PLAYER_BOMB);
     }
+  }
+
+  static size_t mixHashToken(uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    value ^= value >> 31;
+    return static_cast<size_t>(value);
+  }
+
+  static size_t cellHashToken(int y, int x, char owner) {
+    const uint64_t index = static_cast<uint64_t>(y * kBoardWidth + x);
+    const uint64_t ownerValue = static_cast<uint64_t>(static_cast<unsigned char>(owner));
+    return mixHashToken((index << 8) ^ ownerValue ^ 0x3141592653589793ULL);
+  }
+
+  static size_t playedWordHashToken(LegalWordId legalWordId) {
+    return mixHashToken(static_cast<uint64_t>(legalWordId) ^ 0x2718281828459045ULL);
+  }
+
+  static size_t playerHashToken(char player) {
+    return mixHashToken(static_cast<uint64_t>(static_cast<unsigned char>(player)) ^ 0xfeedfacecafebeefULL);
+  }
+
+  void setCellState(int y, int x, char owner) {
+    const char currentOwner = mState.get(y, x);
+    if (currentOwner == owner) {
+      return;
+    }
+
+    mHashValue ^= cellHashToken(y, x, currentOwner);
+    mState.set(y, x, owner);
+    mHashValue ^= cellHashToken(y, x, owner);
+  }
+
+  void setPlayedWord(LegalWordId legalWordId, bool played) {
+    if (mPlayedWords[legalWordId] == played) {
+      return;
+    }
+
+    mHashValue ^= playedWordHashToken(legalWordId);
+    mPlayedWords[legalWordId] = played;
+  }
+
+  void setPlayerToMove(char player) {
+    if (player_to_move == player) {
+      return;
+    }
+
+    mHashValue ^= playerHashToken(player_to_move);
+    player_to_move = player;
+    mHashValue ^= playerHashToken(player_to_move);
+  }
+
+  size_t computeHashFromState() const {
+    size_t seed = playerHashToken(player_to_move);
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        seed ^= cellHashToken(y, x, mState.get(y, x));
+      }
+    }
+    for (size_t legalWordId = 0; legalWordId < mPlayedWords.size(); legalWordId++) {
+      if (mPlayedWords[legalWordId]) {
+        seed ^= playedWordHashToken(static_cast<LegalWordId>(legalWordId));
+      }
+    }
+    return seed;
   }
   
   // Return the value of this board state from the perspective of the given player.
@@ -320,7 +394,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     bool hadBomb = (mState.get(y, x) == PLAYER_BOMB);
     bool hadMegabomb = (mState.get(y, x) == PLAYER_MEGABOMB);
     
-    mState.set(y, x, player_to_move);
+    setCellState(y, x, player_to_move);
     
     // A bomb causes the player to get the grid squares North, South, East and
     // West of this grid square.
@@ -357,7 +431,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // Mark this word as played.
     std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(mBoard->getLegalWordIds(mBoard->getLegalWord(move.mLegalWordId).mWord));
     for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
-      mPlayedWords[i->second] = true;
+      setPlayedWord(i->second, true);
     }
   }
   
@@ -376,7 +450,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     
     char visitedOwner = mState.get(y, x);
     if ((visitedOwner & 0x8) == 0 && owner == visitedOwner) {
-      mState.set(y, x, visitedOwner | 0x8);
+      setCellState(y, x, visitedOwner | 0x8);
       
       markConnected(y - 1, x - 1, owner);
       markConnected(y - 1, x, owner);
@@ -398,11 +472,11 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
         char owner = mState.get(y, x);
         
         if (owner & 0x8) {
-          mState.set(y, x, owner & 0x7);
+          setCellState(y, x, owner & 0x7);
         } else if (owner == PLAYER_BOMB || owner == PLAYER_MEGABOMB) {
           // Skip this one. We didn't visit it so it's definitionally unowned.
         } else {
-          mState.set(y, x, PLAYER_UNOWNED);
+          setCellState(y, x, PLAYER_UNOWNED);
         }
       }
     }
@@ -424,7 +498,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     clearNotConnected();
     
     // Change to the new player.
-    player_to_move = get_enemy(player_to_move);
+    setPlayerToMove(get_enemy(player_to_move));
   }
   
   std::ostream &to_stream(std::ostream &os) const override {
@@ -436,10 +510,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   }
   
   size_t hash() const override {
-    size_t seed = boost::hash_range(mState.begin(), mState.end());
-    boost::hash_combine(seed, player_to_move);
-    boost::hash_combine(seed, boost::hash_range(mPlayedWords.begin(), mPlayedWords.end()));
-    return seed;
+    return mHashValue;
   }
   
   const std::vector<std::string> getAlreadyPlayed() const {
@@ -459,8 +530,43 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   void addAlreadyPlayed(const std::string& alreadyPlayed) {
     for (int curId = 0; curId < mPlayedWords.size(); curId++) {
       if (mBoard->getLegalWord(curId).mWord.compare(alreadyPlayed) == 0) {
-        mPlayedWords[curId] = true;
+        setPlayedWord(curId, true);
       }
+    }
+  }
+};
+
+template<>
+class StateUndoer<WordBaseState, WordBaseMove> {
+private:
+  WordBaseGridState mSavedGridState;
+  char mSavedPlayerToMove;
+  size_t mSavedHashValue;
+  std::vector<LegalWordId> mWordsMarkedPlayed;
+  WordBaseState& mStateToUndo;
+
+public:
+  StateUndoer(WordBaseState& state, const WordBaseMove& move)
+    : mSavedGridState(state.mState),
+      mSavedPlayerToMove(state.player_to_move),
+      mSavedHashValue(state.mHashValue),
+      mStateToUndo(state) {
+    const std::string& word = state.mBoard->getLegalWord(move.mLegalWordId).mWord;
+    std::pair<std::multimap<std::string, LegalWordId>::iterator, std::multimap<std::string, LegalWordId>::iterator> legalIdsForWord(
+      state.mBoard->getLegalWordIds(word));
+    for (auto i = legalIdsForWord.first; i != legalIdsForWord.second; ++i) {
+      if (!state.mPlayedWords[i->second]) {
+        mWordsMarkedPlayed.push_back(i->second);
+      }
+    }
+  }
+
+  ~StateUndoer() {
+    mStateToUndo.mState = mSavedGridState;
+    mStateToUndo.player_to_move = mSavedPlayerToMove;
+    mStateToUndo.mHashValue = mSavedHashValue;
+    for (auto legalWordId : mWordsMarkedPlayed) {
+      mStateToUndo.mPlayedWords[legalWordId] = false;
     }
   }
 };

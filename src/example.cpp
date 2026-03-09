@@ -217,6 +217,55 @@ namespace {
     EXPECT_EQ(minimax.getLastSearchStats().goodness, 10);
   }
 
+  TEST_F(FooTest, WordBaseStateUndoRestoresBoardTurnAndPlayedWords) {
+    std::istringstream dictionaryFileContents(
+      std::string("gram\n")
+      + "glam\n"
+      + "glamor\n"
+      + "glamorizes\n"
+      + "glass\n");
+    WordDictionary wd(dictionaryFileContents);
+    BoardStatic board(kReadmeBoard, wd);
+    WordBaseState state(&board, PLAYER_1);
+    WordBaseState original(state);
+
+    std::vector<WordBaseMove> moves = state.get_legal_moves(INF, "glamorizes");
+    ASSERT_EQ(moves.size(), 1);
+
+    {
+      StateUndoer<WordBaseState, WordBaseMove> undoer(state, moves[0]);
+      state.make_move(moves[0]);
+      EXPECT_NE(state.player_to_move, original.player_to_move);
+      EXPECT_NE(state.hash(), original.hash());
+    }
+
+    EXPECT_TRUE(state == original);
+    EXPECT_EQ(state.hash(), original.hash());
+  }
+
+  TEST_F(FooTest, WordBaseStateCachedHashMatchesFullRecomputation) {
+    std::istringstream dictionaryFileContents(
+      std::string("gram\n")
+      + "glam\n"
+      + "glamor\n"
+      + "glamorizes\n"
+      + "glass\n");
+    WordDictionary wd(dictionaryFileContents);
+    BoardStatic board(kReadmeBoard, wd);
+    WordBaseState state(&board, PLAYER_1);
+
+    EXPECT_EQ(state.hash(), state.computeHashFromState());
+
+    state.addAlreadyPlayed("glam");
+    EXPECT_EQ(state.hash(), state.computeHashFromState());
+
+    std::vector<WordBaseMove> moves = state.get_legal_moves(INF, "glamorizes");
+    ASSERT_EQ(moves.size(), 1);
+    state.make_move(moves[0]);
+
+    EXPECT_EQ(state.hash(), state.computeHashFromState());
+  }
+
   TEST_F(FooTest, WordBaseStateHashTracksPlayerAndPlayedWords) {
     std::istringstream dictionaryFileContents(std::string("cao\n"));
     WordDictionary wd(dictionaryFileContents);

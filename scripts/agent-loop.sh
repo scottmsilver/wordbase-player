@@ -4,6 +4,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CANONICAL_BENCHMARK_LOG="$ROOT_DIR/benchmark-progress.csv"
+export GIT_EDITOR=true
+export GIT_SEQUENCE_EDITOR=true
+export GIT_MERGE_AUTOEDIT=no
 
 INTERVAL_SECONDS=1
 MAX_ITERATIONS=0

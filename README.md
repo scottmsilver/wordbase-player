@@ -35,6 +35,13 @@ cmake --build build
 ctest --output-on-failure --test-dir build
 ```
 
+To build the release benchmark binary used for search tuning:
+
+```
+cmake -S src -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target perf-test
+```
+
 If you intentionally want to use a non-system prefix such as Conda, pass it explicitly:
 
 ```
@@ -47,6 +54,21 @@ To use:
 ```
 ./build/wordbase-driver ./src/twl06_with_wordbase_additions.txt
 ```
+
+Benchmarking
+
+Use the checked-in benchmark scenarios instead of ad hoc command lines when comparing search changes:
+
+```
+./scripts/run-benchmarks.sh short
+./scripts/run-benchmarks.sh long
+./scripts/run-benchmarks.sh short-no-tt
+```
+
+The current intended meanings are:
+- `short`: primary two-turn comparison baseline for small A/B changes
+- `long`: longer confirmation run with two warm-up turns
+- `short-no-tt`: same short baseline with the transposition table disabled
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves

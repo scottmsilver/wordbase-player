@@ -142,6 +142,12 @@ ensure_binary() {
     echo "Build it first with: cmake --build \"$BUILD_DIR\" --target perf-test" >&2
     exit 1
   fi
+
+  # Rebuild if any source/header is newer than the perf-test binary.
+  if find "$ROOT_DIR/src" -type f \( -name '*.cpp' -o -name '*.h' \) -newer "$PERF_TEST_BIN" -print -quit | grep -q .; then
+    echo "perf-test is out of date; rebuilding..." >&2
+    cmake --build "$BUILD_DIR" --target perf-test
+  fi
 }
 
 run_named() {

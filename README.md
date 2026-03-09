@@ -101,6 +101,23 @@ touch logs/agent-loop/STOP
 
 The standing prompt is materialized to `logs/agent-loop/prompt.txt` at startup so you can inspect or edit the loop instructions.
 
+Agent Fleet
+
+For a master/worker setup, use the fleet scripts:
+
+```bash
+./scripts/agent-fleet.sh --workers 3 --model gpt-5.4 --master-model gpt-5.4
+```
+
+This starts:
+- one planning master that writes concrete experiment tasks under `logs/agent-fleet/tasks/pending`
+- multiple workers in isolated git worktrees under `.codex-workers/`
+
+The intended flow is:
+- the master proposes experiments with explicit hypotheses and benchmark commands
+- workers claim tasks one at a time, test them on scratch branches, and write results back through commits, logs, and benchmark CSV rows
+- workers should gate changes on `profile` first and then `profile-suite` before keeping them
+
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves

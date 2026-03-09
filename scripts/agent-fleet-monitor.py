@@ -287,14 +287,15 @@ def worker_infos() -> List[WorkerInfo]:
         if not worktree.is_dir():
             continue
         name = worktree.name
+        task_owner = name.split("-iter-")[0] if "-iter-" in name else name
         branch = run_cmd(["git", "-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
         head = run_cmd(["git", "-C", str(worktree), "rev-parse", "--short", "HEAD"]) or "unknown"
         dirty_out = run_cmd(["git", "-C", str(worktree), "status", "--short"])
         dirty = len([line for line in dirty_out.splitlines() if line.strip()])
-        current_task, current_task_state = latest_task_for_worker(name)
+        current_task, current_task_state = latest_task_for_worker(task_owner)
         latest_activity, latest_activity_age_seconds = latest_activity_line(name)
         codex = find_codex_process(worktree)
-        bench_path = worktree / "logs" / "agent-loop" / name / "benchmark-progress.csv"
+        bench_path = worktree / "logs" / "agent-loop" / task_owner / "benchmark-progress.csv"
         if not bench_path.exists():
             bench_path = worktree / "benchmark-progress.csv"
         kept, discarded = read_benchmark_rows(bench_path)

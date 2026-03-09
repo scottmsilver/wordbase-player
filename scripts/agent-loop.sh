@@ -347,6 +347,8 @@ prepare_fresh_worktree() {
   git -C "$CANONICAL_ROOT" fetch origin >/dev/null 2>&1 || true
   git -C "$CANONICAL_ROOT" worktree add -B "$branch_name" "$work_root" "$BASE_REF" >/dev/null
 
+  git -C "$work_root" submodule update --init --recursive >/dev/null 2>&1 || true
+
   cmake -S "$work_root/src" -B "$work_root/build-release" -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build "$work_root/build-release" --target perf-test -j4 >/dev/null
 

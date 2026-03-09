@@ -376,7 +376,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
 
     int moveIndex = 0;
     // Iterate from set bit to set bit, each representing a legal word in our set.
-    for (int renumberedGoodness = validWordBits.find_next(0); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
+    for (size_t renumberedGoodness = validWordBits.find_first(); renumberedGoodness != boost::dynamic_bitset<>::npos; renumberedGoodness = validWordBits.find_next(renumberedGoodness)) {
       LegalWordId legalWordId = mBoard->getLegalWordIdFromRenumberedGoodness(renumberedGoodness, this->player_to_move == PLAYER_1);
 
       // Ensure already played words are ignored.

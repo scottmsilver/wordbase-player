@@ -109,6 +109,12 @@ For a master/worker setup, use the fleet scripts:
 ./scripts/agent-fleet.sh --workers 3 --model gpt-5.4 --master-model gpt-5.4
 ```
 
+Check fleet status with:
+
+```bash
+./scripts/agent-fleet-status.sh
+```
+
 This starts:
 - one planning master that writes concrete experiment tasks under `logs/agent-fleet/tasks/pending`
 - multiple workers in isolated git worktrees under `.codex-workers/`

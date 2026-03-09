@@ -7,6 +7,19 @@ BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 PERF_TEST_BIN="${PERF_TEST_BIN:-$BUILD_DIR/perf-test}"
 DICTIONARY_PATH="${DICTIONARY_PATH:-$ROOT_DIR/src/twl06_with_wordbase_additions.txt}"
 BOARD_SUITE_FILE="${BOARD_SUITE_FILE:-$ROOT_DIR/scripts/benchmark-board-suite.txt}"
+NEURAL_MODEL="${NEURAL_MODEL:-}"
+
+# If using a torch-enabled build, ensure torch libraries are on LD_LIBRARY_PATH.
+TORCH_LIB_DIR="${TORCH_LIB_DIR:-/home/ssilver/anaconda3/lib/python3.12/site-packages/torch/lib}"
+if [[ -n "$NEURAL_MODEL" && -d "$TORCH_LIB_DIR" ]]; then
+  export LD_LIBRARY_PATH="${TORCH_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+# Build neural model flags for perf-test invocations.
+NEURAL_FLAGS=()
+if [[ -n "$NEURAL_MODEL" ]]; then
+  NEURAL_FLAGS=(--neural-model "$NEURAL_MODEL")
+fi
 
 usage() {
   cat <<EOF
@@ -25,6 +38,8 @@ Environment overrides:
   PERF_TEST_BIN    Full path to the perf-test binary.
   DICTIONARY_PATH  Full path to the dictionary file.
   BOARD_SUITE_FILE Full path to the checked-in benchmark board suite.
+  NEURAL_MODEL     Path to TorchScript model for neural move ordering.
+  TORCH_LIB_DIR    Path to torch shared libraries (auto-detected).
 EOF
 }
 
@@ -34,7 +49,8 @@ run_short() {
     --max-depth 4 \
     --max-moves 200 \
     --max-turns 2 \
-    --warmup-turns 0
+    --warmup-turns 0 \
+    "${NEURAL_FLAGS[@]}"
 }
 
 run_long() {
@@ -43,7 +59,8 @@ run_long() {
     --max-depth 4 \
     --max-moves 200 \
     --max-turns 6 \
-    --warmup-turns 2
+    --warmup-turns 2 \
+    "${NEURAL_FLAGS[@]}"
 }
 
 run_short_no_tt() {
@@ -53,7 +70,8 @@ run_short_no_tt() {
     --max-moves 200 \
     --max-turns 2 \
     --warmup-turns 0 \
-    --no-tt
+    --no-tt \
+    "${NEURAL_FLAGS[@]}"
 }
 
 run_profile() {
@@ -63,7 +81,8 @@ run_profile() {
     --max-moves 200 \
     --max-turns 2 \
     --warmup-turns 2 \
-    --repeat-searches 5
+    --repeat-searches 5 \
+    "${NEURAL_FLAGS[@]}"
 }
 
 run_profile_suite() {
@@ -94,7 +113,8 @@ run_profile_suite() {
       --max-moves 200 \
       --max-turns 2 \
       --warmup-turns 2 \
-      --repeat-searches 5)"
+      --repeat-searches 5 \
+      "${NEURAL_FLAGS[@]}")"
     printf '%s\n' "$run_output"
 
     local summary_line

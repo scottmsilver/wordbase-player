@@ -272,9 +272,9 @@ int main(int argc, char** argv) {
       if (neuralEval) {
         NeuralEvaluator* evalPtr = neuralEval.get();
         algorithm.setMoveReorderer([evalPtr](WordBaseState* state, std::vector<WordBaseMove>& moves) {
-          // Single forward pass: use policy logits to score all moves
-          auto scores = evalPtr->policyScoreMoves(*state, moves);
-          // Sort all moves by policy score (highest first)
+          // Evaluate all child positions with the value head (single batched GPU pass).
+          auto scores = evalPtr->evaluateMoves(*state, moves);
+          // Sort moves by value score (highest first = best for current player).
           std::vector<std::pair<int, size_t>> scored(moves.size());
           for (size_t i = 0; i < moves.size(); i++) {
             scored[i] = {scores[i], i};

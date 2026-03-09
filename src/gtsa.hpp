@@ -351,6 +351,7 @@ struct Minimax : public Algorithm<S, M> {
   bool mUseTranspositionTable;
   std::ostream* mTraceStream;
   SearchStats mLastSearchStats;
+  static const int ROOT_ASPIRATION_WINDOW = 128;
   
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
@@ -394,6 +395,8 @@ struct Minimax : public Algorithm<S, M> {
     timer.start();
     mLastSearchStats = SearchStats();
     M best_move;
+    int previous_completed_goodness = 0;
+    bool has_previous_completed_goodness = false;
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
       LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       beta_cuts = 0;
@@ -405,9 +408,34 @@ struct Minimax : public Algorithm<S, M> {
       leafs = 0;
       LOG(DEBUG) << *state << std::endl;
       
-      auto result = minimax(state, max_depth, -INF, INF, 0);
+      bool tried_aspiration = false;
+      MinimaxResult<M> result;
+      if (mUseTranspositionTable && has_previous_completed_goodness) {
+        TTEntry<M> root_entry;
+        if (get_tt_entry(state, root_entry)
+            && root_entry.value_type == TTEntryType::EXACT_VALUE
+            && root_entry.depth >= max_depth - 1
+            && root_entry.value == previous_completed_goodness) {
+          // Only trust the narrow window when the prior root score was verified exact.
+          // That keeps stable Wordbase lanes like INTERROBANG in-band while a deeper
+          // PERILLED-style breakthrough still triggers an immediate full re-search.
+          const int aspiration_alpha = std::max(-INF, previous_completed_goodness - ROOT_ASPIRATION_WINDOW);
+          const int aspiration_beta = std::min(INF, previous_completed_goodness + ROOT_ASPIRATION_WINDOW);
+          result = minimax(state, max_depth, aspiration_alpha, aspiration_beta, 0);
+          tried_aspiration = true;
+        }
+      }
+      if (!tried_aspiration
+          || !result.completed
+          || result.goodness <= previous_completed_goodness - ROOT_ASPIRATION_WINDOW
+          || result.goodness >= previous_completed_goodness + ROOT_ASPIRATION_WINDOW) {
+        result = minimax(state, max_depth, -INF, INF, 0);
+        tried_aspiration = false;
+      }
       if (result.completed) {
         best_move = result.best_move;
+        previous_completed_goodness = result.goodness;
+        has_previous_completed_goodness = true;
         mLastSearchStats.completed = true;
         mLastSearchStats.goodness = result.goodness;
         mLastSearchStats.nodes = nodes;
@@ -436,6 +464,9 @@ struct Minimax : public Algorithm<S, M> {
             << " tt_size: " << transposition_table.size()
             << " max_depth: " << max_depth << std::endl;
         }
+      }
+      else {
+        has_previous_completed_goodness = false;
       }
       LOG(DEBUG) << " } ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       if (timer.exceeded(MAX_SECONDS)) {

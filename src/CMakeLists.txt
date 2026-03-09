@@ -1,91 +1,120 @@
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
-# Download and unpack googletest at configure time
-configure_file(CMakeLists.txt.in
-               googletest-download/CMakeLists.txt)
-execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
-  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/googletest-download )
-execute_process(COMMAND ${CMAKE_COMMAND} --build .
-  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/googletest-download )
+project(WordBase LANGUAGES CXX)
 
-# Prevent GoogleTest from overriding our compiler/linker options
-# when building with Visual Studio
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
- 
-# Add googletest directly to our build. This adds
-# the following targets: gtest, gtest_main, gmock
-# and gmock_main
-add_subdirectory(${CMAKE_BINARY_DIR}/googletest-src
-                 ${CMAKE_BINARY_DIR}/googletest-build)
- 
-# The gtest/gmock targets carry header search path
-# dependencies automatically when using CMake 2.8.11 or
-# later. Otherwise we have to add them here ourselves.
-if (CMAKE_VERSION VERSION_LESS 2.8.11)
-  include_directories("${gtest_SOURCE_DIR}/include"
-                      "${gmock_SOURCE_DIR}/include")
+include(CTest)
+include(FetchContent)
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(WORDBASE_DEPENDENCY_PREFIX "" CACHE PATH
+  "Optional prefix containing non-system dependencies, for example a Conda environment")
+
+if (WORDBASE_DEPENDENCY_PREFIX)
+  message(STATUS "Using non-system dependency prefix: ${WORDBASE_DEPENDENCY_PREFIX}")
+else()
+  message(STATUS "Using system dependency search paths only")
+  set(CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH FALSE)
+  set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
+  set(CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH FALSE)
 endif()
 
+function(wordbase_append_prefix_hints out_var)
+  set(hints)
+  if (WORDBASE_DEPENDENCY_PREFIX)
+    list(APPEND hints "${WORDBASE_DEPENDENCY_PREFIX}")
+  endif()
+  set(${out_var} "${hints}" PARENT_SCOPE)
+endfunction()
 
+wordbase_append_prefix_hints(WORDBASE_DEPENDENCY_HINTS)
 
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG release-1.12.1
+)
+FetchContent_MakeAvailable(googletest)
 
-# First test
-add_executable(example example.cpp)
-target_link_libraries(example gtest_main)
+find_package(Boost 1.45 REQUIRED COMPONENTS timer)
+find_package(OpenSSL REQUIRED)
+
+find_path(WORDBASE_SQLITE3_INCLUDE_DIR
+  NAMES sqlite3.h
+  HINTS ${WORDBASE_DEPENDENCY_HINTS}
+  PATH_SUFFIXES include include/x86_64-linux-gnu
+  PATHS /usr/include /usr/include/x86_64-linux-gnu /usr/local/include)
+
+find_library(WORDBASE_SQLITE3_LIBRARY
+  NAMES sqlite3 libsqlite3.so libsqlite3.so.0
+  HINTS ${WORDBASE_DEPENDENCY_HINTS}
+  PATH_SUFFIXES lib lib64 lib/x86_64-linux-gnu
+  PATHS /usr/lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/local/lib)
+
+if (NOT WORDBASE_SQLITE3_INCLUDE_DIR OR NOT WORDBASE_SQLITE3_LIBRARY)
+  message(FATAL_ERROR
+    "Could not find SQLite3. Set WORDBASE_DEPENDENCY_PREFIX or pass "
+    "-DWORDBASE_SQLITE3_INCLUDE_DIR=... and -DWORDBASE_SQLITE3_LIBRARY=...")
+endif()
+
+find_path(WORDBASE_READLINE_INCLUDE_DIR
+  NAMES editline/readline.h readline/readline.h
+  HINTS ${WORDBASE_DEPENDENCY_HINTS}
+  PATH_SUFFIXES include include/editline include/readline
+  PATHS /usr/include /usr/include/x86_64-linux-gnu /usr/local/include)
+
+find_library(WORDBASE_READLINE_LIBRARY
+  NAMES readline libreadline.so libreadline.so.8 edit libedit.so libedit.so.2
+  HINTS ${WORDBASE_DEPENDENCY_HINTS}
+  PATH_SUFFIXES lib lib64 lib/x86_64-linux-gnu
+  PATHS /usr/lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/local/lib)
+
+if (NOT WORDBASE_READLINE_INCLUDE_DIR OR NOT WORDBASE_READLINE_LIBRARY)
+  message(FATAL_ERROR
+    "Could not find readline/editline. Set WORDBASE_DEPENDENCY_PREFIX or pass "
+    "-DWORDBASE_READLINE_INCLUDE_DIR=... and -DWORDBASE_READLINE_LIBRARY=...")
+endif()
+
+add_executable(example example.cpp obstack/obstack.cpp)
+target_link_libraries(example PRIVATE gtest gtest_main ${Boost_LIBRARIES})
 add_test(NAME example_test COMMAND example)
-set_property(TARGET example PROPERTY CXX_STANDARD 11)
-set_property(TARGET example PROPERTY CXX_STANDARD_REQUIRED ON)
 
-# First test
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cli-smoke.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/cli-smoke.cmake
+  @ONLY)
+add_test(
+  NAME wordbase_driver_cli_smoke_test
+  COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cli-smoke.cmake)
+
 add_executable(perf-test perf-test.cpp obstack/obstack.cpp)
-target_link_libraries(perf-test)
-target_include_directories(perf-test PUBLIC obstack)
-set_property(TARGET perf-test PROPERTY CXX_STANDARD 11)
-set_property(TARGET perf-test PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_definitions(perf-test PRIVATE HAS_BOOST)
+target_include_directories(perf-test PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(perf-test PRIVATE ${Boost_LIBRARIES})
 
-# Decrypt
 add_executable(decrypt decrypt.cpp)
-target_link_libraries(decrypt ${OPENSSL_LIBRARIES})
-set_property(TARGET decrypt PROPERTY CXX_STANDARD 11)
-set_property(TARGET decrypt PROPERTY CXX_STANDARD_REQUIRED ON)
-
+target_include_directories(decrypt PRIVATE
+  ${OPENSSL_INCLUDE_DIR}
+  ${WORDBASE_SQLITE3_INCLUDE_DIR})
+target_link_libraries(decrypt PRIVATE
+  ${OPENSSL_LIBRARIES}
+  ${WORDBASE_SQLITE3_LIBRARY})
 
 add_executable(test-namespace test-namespace.cpp)
-target_link_libraries(test-namespace)
-set_property(TARGET test-namespace PROPERTY CXX_STANDARD 11)
-set_property(TARGET test-namespace PROPERTY CXX_STANDARD_REQUIRED ON)
-
-project(WordBase CXX)
-cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
+target_include_directories(test-namespace PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(test-namespace PRIVATE ${Boost_LIBRARIES})
 
 add_executable(wordbase-driver driver.cpp obstack/obstack.cpp)
-set_property(TARGET wordbase-driver PROPERTY CXX_STANDARD 11)
-set_property(TARGET wordbase-driver PROPERTY CXX_STANDARD_REQUIRED ON)
-target_link_libraries(wordbase-driver readline)
-
-FIND_PACKAGE(Boost)
-find_package(Boost 1.45.0 COMPONENTS timer)
-
-IF (Boost_FOUND)
-    INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIR})
-    ADD_DEFINITIONS( "-DHAS_BOOST" )
-    target_link_libraries(perf-test ${Boost_LIBRARIES})
-ENDIF()
-
-FIND_PACKAGE(OpenSSL)
-IF (OPENSSL_FOUND)
-   INCLUDE_DIRECTORIES(${OPENSSL_INCLUDE_DIR})
-   target_link_libraries (decrypt ${OPENSSL_LIBRARIES})
-   target_link_libraries (wordbase-driver ${OPENSSL_LIBRARIES})
-ENDIF()
-
-
-find_package(SQLite3 REQUIRED)
-IF (SQLITE3_FOUND)
-   INCLUDE_DIRECTORIES(${SQLITE3_INCLUDE_DIR})
-   target_link_libraries (decrypt ${SQLITE3_LIBRARIES})
-   target_link_libraries (wordbase-driver ${SQLITE3_LIBRARIES})
-ENDIF()
-
-
-
+target_compile_definitions(wordbase-driver PRIVATE HAS_BOOST)
+target_include_directories(wordbase-driver PRIVATE
+  ${Boost_INCLUDE_DIRS}
+  ${OPENSSL_INCLUDE_DIR}
+  ${WORDBASE_SQLITE3_INCLUDE_DIR}
+  ${WORDBASE_READLINE_INCLUDE_DIR})
+target_link_libraries(wordbase-driver PRIVATE
+  ${Boost_LIBRARIES}
+  ${OPENSSL_LIBRARIES}
+  ${WORDBASE_SQLITE3_LIBRARY}
+  ${WORDBASE_READLINE_LIBRARY})

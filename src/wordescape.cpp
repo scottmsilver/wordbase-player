@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <boost/dynamic_bitset.hpp>
+#include <boost/format.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
 #include <cstddef>
 #include <fstream>

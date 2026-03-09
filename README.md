@@ -10,19 +10,42 @@ On most games if I give it 45 seconds in the release build on a MacBook Pro from
 PS: I borrowed Adam's alpha-beta pruning implementation. Thanks Adam!
 PPS: The driver itself has lots more features, which I haven't documented.
 
-To build as a debug version (use -DCMAKE_BUILD_TYPE=Release on the cmake command line to build Release)
+Build
+
+The default build now prefers system-installed dependencies and ignores ambient environment prefixes such as Conda unless you opt in explicitly.
+
+System packages expected on Linux are:
+- C++ toolchain and CMake
+- Boost with the `timer` component
+- OpenSSL development headers and libraries
+- SQLite3 development headers and libraries
+- readline or libedit development headers and libraries
+
+Typical Debian or Ubuntu packages are:
 
 ```
-# Move to directory containing "src"
-mkdir build
-cd build
-cmake ../src
-make
+sudo apt install build-essential cmake libboost-all-dev libssl-dev libsqlite3-dev libreadline-dev
+```
+
+To build as a debug version (use `-DCMAKE_BUILD_TYPE=Release` for Release):
+
+```
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+ctest --output-on-failure --test-dir build
+```
+
+If you intentionally want to use a non-system prefix such as Conda, pass it explicitly:
+
+```
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Debug -DWORDBASE_DEPENDENCY_PREFIX=$CONDA_PREFIX
+cmake --build build
+ctest --output-on-failure --test-dir build
 ```
 
 To use:
 ```
-./wordbase-driver
+./build/wordbase-driver ./src/twl06_with_wordbase_additions.txt
 ```
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```

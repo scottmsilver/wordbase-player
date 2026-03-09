@@ -22,7 +22,23 @@
 #include <boost/spirit/include/phoenix_operator.hpp>
 
 #include <algorithm>
-#include <editline/readline.h>
+#if defined(__has_include)
+#  if __has_include(<editline/readline.h>)
+#    include <editline/readline.h>
+#    if __has_include(<editline/history.h>)
+#      include <editline/history.h>
+#    endif
+#  elif __has_include(<readline/readline.h>)
+#    include <readline/readline.h>
+#    if __has_include(<readline/history.h>)
+#      include <readline/history.h>
+#    endif
+#  else
+#    error "readline header not found"
+#  endif
+#else
+#  include <editline/readline.h>
+#endif
 #include <memory>
 #include <iostream>
 #include <iterator>

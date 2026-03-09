@@ -3,6 +3,11 @@
 
 #include <boost/dynamic_bitset.hpp>
 
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -199,6 +204,8 @@ public:
 
   std::vector<int>::const_iterator begin() const { return mLegalWordIds.begin(); }
   std::vector<int>::const_iterator end() const { return mLegalWordIds.end(); }
+  size_t size() const { return mLegalWordIds.size(); }
+  LegalWordId operator[](size_t index) const { return mLegalWordIds[index]; }
 
   const boost::dynamic_bitset<>& wordBits(bool isMaximizer) const {
     return isMaximizer ? mMaximizerWordIdBits : mMinimizerWordIdBits;

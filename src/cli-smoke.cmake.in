@@ -1,0 +1,31 @@
+set(commands
+  "nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves\nwords 0 0\nquit\n")
+
+set(command_file "@CMAKE_CURRENT_BINARY_DIR@/cli-smoke-input.txt")
+file(WRITE "${command_file}" "${commands}")
+
+execute_process(
+  COMMAND "@CMAKE_CURRENT_BINARY_DIR@/wordbase-driver" "@CMAKE_CURRENT_SOURCE_DIR@/twl06_with_wordbase_additions.txt"
+  INPUT_FILE "${command_file}"
+  OUTPUT_VARIABLE cli_output
+  ERROR_VARIABLE cli_error
+  RESULT_VARIABLE cli_status)
+
+if (NOT cli_status EQUAL 0)
+  message(FATAL_ERROR
+    "wordbase-driver exited with ${cli_status}\nstdout:\n${cli_output}\nstderr:\n${cli_error}")
+endif()
+
+foreach(expected
+  "Using dictionary at"
+  "boardshell> nb "
+  "boardshell> words 0 0"
+  "gram: (0,0),(0,1),(1,2),(1,1)"
+  "glamorizes: (0,0),(1,0),(2,1),(1,1),(2,2),(3,3),(3,4),(4,5),(5,5),(6,6)"
+  "boardshell> quit")
+  string(FIND "${cli_output}" "${expected}" found_index)
+  if (found_index EQUAL -1)
+    message(FATAL_ERROR
+      "Did not find expected output: ${expected}\nstdout:\n${cli_output}\nstderr:\n${cli_error}")
+  endif()
+endforeach()

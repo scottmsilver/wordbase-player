@@ -72,6 +72,27 @@ fi
 
 mkdir -p "$WORKTREE_ROOT" "$TASK_ROOT/pending" "$TASK_ROOT/in-progress" "$TASK_ROOT/done" "$TASK_ROOT/failed" "$PID_DIR"
 
+git_with_retry() {
+  local retries=5
+  local delay=1
+  local attempt=1
+  local output
+  while true; do
+    if output="$("$@" 2>&1)"; then
+      return 0
+    fi
+    if [[ "$output" == *"config: File exists"* || "$output" == *"config.lock"* || "$output" == *"index.lock"* ]]; then
+      if [[ "$attempt" -lt "$retries" ]]; then
+        sleep "$delay"
+        attempt=$((attempt + 1))
+        continue
+      fi
+    fi
+    printf '%s\n' "$output" >&2
+    return 1
+  done
+}
+
 launch_master() {
   local cmd=("$ROOT_DIR/scripts/agent-master.sh")
   if [[ -n "$MASTER_MODEL" ]]; then
@@ -95,12 +116,12 @@ launch_worker() {
   local worker_log="$ROOT_DIR/logs/agent-fleet/${worker_name}-launcher.log"
 
   if [[ ! -d "$worktree_path/.git" && ! -f "$worktree_path/.git" ]]; then
-    git worktree add -B "$branch_name" "$worktree_path" "$BASE_REF"
+    git_with_retry git worktree add -B "$branch_name" "$worktree_path" "$BASE_REF"
   fi
 
-  git -C "$worktree_path" fetch origin >/dev/null 2>&1 || true
-  git -C "$worktree_path" checkout -B "$branch_name" "$BASE_REF" >/dev/null
-  git -C "$worktree_path" submodule update --init --recursive >/dev/null
+  git_with_retry git -C "$worktree_path" fetch origin >/dev/null
+  git_with_retry git -C "$worktree_path" checkout -B "$branch_name" "$BASE_REF" >/dev/null
+  git_with_retry git -C "$worktree_path" submodule update --init --recursive >/dev/null
   cmake -S "$worktree_path/src" -B "$worktree_path/build-release" -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build "$worktree_path/build-release" --target perf-test -j4 >/dev/null
 

@@ -35,6 +35,10 @@ const int kFutureMoveDiversityDivisor = 2;
 // more dangerous than keeping mostly short continuations like {"glass", "glam"}.
 const int kLongFutureMoveLength = 8;
 const int kLongFutureMoveDiversityDivisor = 4;
+// Reward paths that run through squares whose surrounding words usually keep pushing toward the goal line.
+// Example: a square that mostly sits inside deep lanes like "perilled" should beat one whose words stall in place,
+// even if both squares participate in the same raw number of legal words.
+const int kSquareForwardReachDivisor = 4;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -289,6 +293,8 @@ class BoardStatic {
   CoordinateList mMegabombs;
 
   Grid<int, kBoardHeight, kBoardWidth> mSquareWordCounts;
+  Grid<int, kBoardHeight, kBoardWidth> mMaximizerSquareForwardReach;
+  Grid<int, kBoardHeight, kBoardWidth> mMinimizerSquareForwardReach;
   std::vector<int> mLegalWordScratchGeneration;
   int mCurrentScratchGeneration;
   
@@ -327,6 +333,7 @@ public:
     
     findLegalWordsForGrid();
     initializeSquareWordCounts();
+    initializeSquareForwardReach();
     mLegalWordScratchGeneration.assign(mLegalWordFactory.getSize(), 0);
     recomputeLegalWordGoodness();
     mLegalWordFactory.finalizeEquivalentWordIds();
@@ -421,6 +428,31 @@ private:
     }
   }
 
+  void initializeSquareForwardReach() {
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        const LegalWordList& legalWords = mLegalWords.get(y, x);
+        int maximizerReachTotal = 0;
+        int minimizerReachTotal = 0;
+        for (auto legalWordId : legalWords) {
+          const LegalWord& legalWord = mLegalWordFactory.getWord(legalWordId);
+          int furthestRow = 0;
+          int nearestRow = kBoardHeight - 1;
+          for (const auto& cell : legalWord.mWordSequence) {
+            furthestRow = std::max(furthestRow, cell.first);
+            nearestRow = std::min(nearestRow, cell.first);
+          }
+          maximizerReachTotal += furthestRow;
+          minimizerReachTotal += (kBoardHeight - 1 - nearestRow);
+        }
+
+        const int legalWordCount = static_cast<int>(legalWords.size());
+        mMaximizerSquareForwardReach.set(y, x, legalWordCount == 0 ? 0 : maximizerReachTotal / legalWordCount);
+        mMinimizerSquareForwardReach.set(y, x, legalWordCount == 0 ? 0 : minimizerReachTotal / legalWordCount);
+      }
+    }
+  }
+
   void recomputeLegalWordGoodness() {
     for (LegalWordId legalWordId = 0; legalWordId < mLegalWordFactory.getSize(); ++legalWordId) {
       LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
@@ -454,6 +486,16 @@ private:
       bonus += mSquareWordCounts.get(cell.first, cell.second);
     }
     return bonus / kSquareWordCountDivisor;
+  }
+
+  int squareForwardReachBonus(const CoordinateList& wordSequence, bool isMaximizer) const {
+    int bonus = 0;
+    const Grid<int, kBoardHeight, kBoardWidth>& squareForwardReach =
+      isMaximizer ? mMaximizerSquareForwardReach : mMinimizerSquareForwardReach;
+    for (const auto& cell : wordSequence) {
+      bonus += squareForwardReach.get(cell.first, cell.second);
+    }
+    return bonus / kSquareForwardReachDivisor;
   }
 
   int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
@@ -522,6 +564,7 @@ private:
       maximizerGoodness += kMegabombTouchWeight;
     }
     maximizerGoodness += squareWordCountBonus(wordSequence);
+    maximizerGoodness += squareForwardReachBonus(wordSequence, true);
 
     return maximizerGoodness;
   }
@@ -543,6 +586,7 @@ private:
       minimizerGoodness += kMegabombTouchWeight;
     }
     minimizerGoodness += squareWordCountBonus(moveSequence);
+    minimizerGoodness += squareForwardReachBonus(moveSequence, false);
 
     return minimizerGoodness;
   }

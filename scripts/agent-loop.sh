@@ -197,7 +197,7 @@ build_prompt() {
   fi
 
   cat >"$PROMPT_FILE" <<EOF
-Continue the optimization loop in /home/ssilver/development/wordbase-player as worker "$WORKER_NAME".
+Continue the optimization loop in $ROOT_DIR as worker "$WORKER_NAME".
 
 Operating rules:
 - Work only on the current scratch branch: $CURRENT_BRANCH
@@ -230,6 +230,7 @@ Assigned task:
 $task_body
 
 Your job in this iteration:
+- Treat $ROOT_DIR as the only workspace root for this run.
 - Inspect the current tree state.
 - Execute the assigned experiment or the best next conservative experiment if no task was assigned.
 - Benchmark with ./scripts/run-benchmarks.sh profile first, then ./scripts/run-benchmarks.sh profile-suite for any candidate you might keep.

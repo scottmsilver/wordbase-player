@@ -96,7 +96,7 @@ build_prompt() {
   fi
 
   cat >"$PROMPT_FILE" <<EOF
-Act as the optimization master for /home/ssilver/development/wordbase-player.
+Act as the optimization master for $ROOT_DIR.
 
 Your only job is to generate concrete worker tasks under:
 - $TASK_ROOT/pending

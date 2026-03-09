@@ -118,6 +118,15 @@ The intended flow is:
 - workers claim tasks one at a time, test them on scratch branches, and write results back through commits, logs, and benchmark CSV rows
 - workers should gate changes on `profile` first and then `profile-suite` before keeping them
 
+You can add your own tasks to the same queue with:
+
+```bash
+./scripts/agent-add-task.sh --title "Try safer TT move ordering"
+./scripts/agent-add-task.sh --title "Test clipped square forward reach" --open
+```
+
+That writes a markdown task into `logs/agent-fleet/tasks/pending/` with the standard benchmark gates already filled in.
+
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves

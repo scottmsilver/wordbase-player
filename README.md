@@ -63,12 +63,14 @@ Use the checked-in benchmark scenarios instead of ad hoc command lines when comp
 ./scripts/run-benchmarks.sh short
 ./scripts/run-benchmarks.sh long
 ./scripts/run-benchmarks.sh short-no-tt
+./scripts/run-benchmarks.sh profile
 ```
 
 The current intended meanings are:
 - `short`: primary two-turn comparison baseline for small A/B changes
 - `long`: longer confirmation run with two warm-up turns
 - `short-no-tt`: same short baseline with the transposition table disabled
+- `profile`: repeated searches on the same post-warmup position so sampling profilers see steady-state search work instead of startup/setup
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
 boardshell> nb gregmiperslmavnetlaecaosrnowykosbrilfakosalagzl*eicveonredgmdamepumselomrtleipcradsndlnoihuiai*eoisatxerhctpteroustupsyalcopaeamhves

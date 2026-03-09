@@ -15,6 +15,7 @@ Scenarios:
   short        Two-turn comparison baseline with TT enabled.
   long         Six-turn confirmation baseline with two warm-up turns.
   short-no-tt  Two-turn comparison baseline with TT disabled.
+  profile      Repeat-search steady-state baseline for sampling profilers.
   all          Run all scenarios (default).
 
 Environment overrides:
@@ -52,6 +53,16 @@ run_short_no_tt() {
     --no-tt
 }
 
+run_profile() {
+  "$PERF_TEST_BIN" "$DICTIONARY_PATH" \
+    --seconds 0.2 \
+    --max-depth 4 \
+    --max-moves 200 \
+    --max-turns 2 \
+    --warmup-turns 2 \
+    --repeat-searches 5
+}
+
 ensure_binary() {
   if [[ ! -x "$PERF_TEST_BIN" ]]; then
     echo "perf-test binary not found: $PERF_TEST_BIN" >&2
@@ -67,6 +78,7 @@ run_named() {
     short) run_short ;;
     long) run_long ;;
     short-no-tt) run_short_no_tt ;;
+    profile) run_profile ;;
     *)
       echo "Unknown scenario: $name" >&2
       usage >&2
@@ -80,13 +92,14 @@ main() {
 
   local scenario="${1:-all}"
   case "$scenario" in
-    short|long|short-no-tt)
+    short|long|short-no-tt|profile)
       run_named "$scenario"
       ;;
     all)
       run_named short
       run_named long
       run_named short-no-tt
+      run_named profile
       ;;
     -h|--help)
       usage

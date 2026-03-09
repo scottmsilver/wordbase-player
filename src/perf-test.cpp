@@ -25,6 +25,7 @@ struct PerfOptions {
   int maxDepth = 4;
   int maxTurns = 200;
   int warmupTurns = 0;
+  int repeatSearches = 0;
   bool useTranspositionTable = true;
   bool printBoards = false;
 };
@@ -65,6 +66,7 @@ void printUsage(const char* argv0) {
     << "  --max-depth <depth>      Max iterative deepening depth (default 4)\n"
     << "  --max-turns <count>      Stop after this many plies (default 200)\n"
     << "  --warmup-turns <count>   Play unmeasured warm-up plies before timing (default 0)\n"
+    << "  --repeat-searches <n>    Re-search the post-warmup position N times without playing moves\n"
     << "  --no-tt                  Disable the transposition table\n"
     << "  --print-boards           Print the board after each move\n";
 }
@@ -91,6 +93,8 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.maxTurns = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--warmup-turns" && index < argc) {
       options.warmupTurns = std::stoi(argv[index++], nullptr, 0);
+    } else if (arg == "--repeat-searches" && index < argc) {
+      options.repeatSearches = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--no-tt") {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
@@ -104,6 +108,9 @@ PerfOptions parseArgs(int argc, char** argv) {
   if (options.warmupTurns < 0) {
     throw std::invalid_argument("--warmup-turns must be non-negative");
   }
+  if (options.repeatSearches < 0) {
+    throw std::invalid_argument("--repeat-searches must be non-negative");
+  }
 
   return options;
 }
@@ -116,6 +123,35 @@ std::string winnerText(const WordBaseState& state) {
     return "PLAYER_2";
   }
   return "draw";
+}
+
+void printSummary(const WordBaseState& state,
+                  const AggregateStats& aggregateStats,
+                  int measuredTurns,
+                  int totalTurns,
+                  int warmupTurns,
+                  bool measurementStarted,
+                  const Timer& gameTimer) {
+  std::cout
+    << "summary turns=" << measuredTurns
+    << " total_turns=" << totalTurns
+    << " warmup_turns=" << warmupTurns
+    << " elapsed=" << (measurementStarted ? gameTimer.seconds_elapsed() : 0.0) << "s"
+    << " terminal=" << (state.is_terminal() ? "true" : "false")
+    << " winner=" << winnerText(state)
+    << " goodness=" << state.get_goodness()
+    << " total_nodes=" << aggregateStats.nodes
+    << " total_leafs=" << aggregateStats.leafs
+    << " total_beta_cuts=" << aggregateStats.betaCuts
+    << " total_tt_hits=" << aggregateStats.ttHits
+    << " total_tt_exacts=" << aggregateStats.ttExacts
+    << " total_tt_cuts=" << aggregateStats.ttCuts
+    << " avg_legal_moves=" << (aggregateStats.turns == 0 ? 0.0 : static_cast<double>(aggregateStats.legalMoves) / aggregateStats.turns)
+    << " avg_nodes_per_turn=" << (aggregateStats.turns == 0 ? 0.0 : static_cast<double>(aggregateStats.nodes) / aggregateStats.turns)
+    << " avg_seconds_per_turn=" << (aggregateStats.turns == 0 ? 0.0 : aggregateStats.moveSeconds / aggregateStats.turns)
+    << " overall_nps=" << (aggregateStats.moveSeconds == 0.0 ? 0.0 : aggregateStats.nodes / aggregateStats.moveSeconds)
+    << " deepest_completed_depth=" << aggregateStats.deepestCompletedDepth
+    << std::endl;
 }
 
 }  // namespace
@@ -143,10 +179,15 @@ int main(int argc, char** argv) {
     BoardStatic board(options.boardText, dictionary);
     WordBaseState state(&board, PLAYER_1);
 
-    Minimax<WordBaseState, WordBaseMove> algorithm(options.maxSecondsPerMove, options.maxMovesPerPosition);
-    algorithm.setMaxDepth(options.maxDepth);
-    algorithm.setUseTranspositionTable(options.useTranspositionTable);
-    algorithm.setTraceStream(nullptr);
+    auto makeAlgorithm = [&options]() {
+      Minimax<WordBaseState, WordBaseMove> algorithm(options.maxSecondsPerMove, options.maxMovesPerPosition);
+      algorithm.setMaxDepth(options.maxDepth);
+      algorithm.setUseTranspositionTable(options.useTranspositionTable);
+      algorithm.setTraceStream(nullptr);
+      return algorithm;
+    };
+
+    auto algorithm = makeAlgorithm();
 
     Timer gameTimer;
     AggregateStats aggregateStats;
@@ -211,26 +252,53 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::cout
-      << "summary turns=" << measuredTurns
-      << " total_turns=" << turn
-      << " warmup_turns=" << options.warmupTurns
-      << " elapsed=" << (measurementStarted ? gameTimer.seconds_elapsed() : 0.0) << "s"
-      << " terminal=" << (state.is_terminal() ? "true" : "false")
-      << " winner=" << winnerText(state)
-      << " goodness=" << state.get_goodness()
-      << " total_nodes=" << aggregateStats.nodes
-      << " total_leafs=" << aggregateStats.leafs
-      << " total_beta_cuts=" << aggregateStats.betaCuts
-      << " total_tt_hits=" << aggregateStats.ttHits
-      << " total_tt_exacts=" << aggregateStats.ttExacts
-      << " total_tt_cuts=" << aggregateStats.ttCuts
-      << " avg_legal_moves=" << (aggregateStats.turns == 0 ? 0.0 : static_cast<double>(aggregateStats.legalMoves) / aggregateStats.turns)
-      << " avg_nodes_per_turn=" << (aggregateStats.turns == 0 ? 0.0 : static_cast<double>(aggregateStats.nodes) / aggregateStats.turns)
-      << " avg_seconds_per_turn=" << (aggregateStats.turns == 0 ? 0.0 : aggregateStats.moveSeconds / aggregateStats.turns)
-      << " overall_nps=" << (aggregateStats.moveSeconds == 0.0 ? 0.0 : aggregateStats.nodes / aggregateStats.moveSeconds)
-      << " deepest_completed_depth=" << aggregateStats.deepestCompletedDepth
-      << std::endl;
+    if (options.repeatSearches > 0) {
+      std::vector<WordBaseMove> legalMoves = state.get_legal_moves(options.maxMovesPerPosition);
+      if (legalMoves.empty()) {
+        std::cout << "profile no legal moves remain after warmup" << std::endl;
+      } else {
+        AggregateStats repeatedSearchStats;
+        Timer repeatedSearchTimer;
+        repeatedSearchTimer.start();
+        for (int repeat = 0; repeat < options.repeatSearches; ++repeat) {
+          auto repeatedAlgorithm = makeAlgorithm();
+          WordBaseState searchState(state);
+          Timer moveTimer;
+          moveTimer.start();
+          WordBaseMove move = repeatedAlgorithm.get_move(&searchState);
+          double moveSeconds = moveTimer.seconds_elapsed();
+          const auto& searchStats = repeatedAlgorithm.getLastSearchStats();
+          repeatedSearchStats.record(searchStats, legalMoves.size());
+
+          const LegalWord& legalWord = board.getLegalWord(move.mLegalWordId);
+          std::cout
+            << "profile " << repeat + 1
+            << " player " << int(state.player_to_move)
+            << " move " << legalWord.mWord
+            << " path " << legalWord.mWordSequence
+            << " elapsed " << moveSeconds << "s"
+            << " legal_moves " << legalMoves.size()
+            << " depth " << searchStats.max_depth
+            << " nodes " << searchStats.nodes
+            << " leafs " << searchStats.leafs
+            << " beta_cuts " << searchStats.beta_cuts
+            << " tt_hits " << searchStats.tt_hits
+            << " nps " << searchStats.nodes_per_second
+            << std::endl;
+        }
+
+        printSummary(state,
+                     repeatedSearchStats,
+                     options.repeatSearches,
+                     turn,
+                     options.warmupTurns,
+                     true,
+                     repeatedSearchTimer);
+        return 0;
+      }
+    }
+
+    printSummary(state, aggregateStats, measuredTurns, turn, options.warmupTurns, measurementStarted, gameTimer);
   } catch (const std::exception& error) {
     std::cerr << error.what() << std::endl;
     return 1;

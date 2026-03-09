@@ -27,6 +27,7 @@ Options:
   --base-ref <ref>       Base ref for worker branches (default: origin/master)
   --search               Enable web search for master and workers
   --reuse-worktrees      Reuse existing worktrees instead of recreating them
+  --fresh-tree           Reset to base ref and clean untracked files each iteration
   --help                 Show this help
 EOF
 }
@@ -55,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reuse-worktrees)
       FRESH_WORKTREES=0
+      shift
+      ;;
+    --fresh-tree)
+      export FLEET_FRESH_TREE=1
       shift
       ;;
     --help|-h)
@@ -147,6 +152,9 @@ launch_worker() {
     --require-task
   )
 
+  if [[ "${FLEET_FRESH_TREE:-0}" -eq 1 ]]; then
+    cmd+=(--fresh-tree)
+  fi
   if [[ -n "$MODEL" ]]; then
     cmd+=(--model "$MODEL")
   fi

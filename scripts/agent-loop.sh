@@ -21,6 +21,7 @@ TASK_DIR=""
 WORKER_NAME=""
 BENCHMARK_LOG=""
 REQUIRE_TASK=0
+FRESH_TREE=0
 
 usage() {
   cat <<'EOF'
@@ -42,6 +43,7 @@ Options:
   --task-file <path>       Run a specific task file
   --task-dir <path>        Claim tasks from <path>/pending and move them through the queue
   --require-task           Only run when a task is assigned (sleep if none)
+  --fresh-tree             Reset to base ref and clean untracked files each iteration
   --help                   Show this help
 EOF
 }
@@ -98,6 +100,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --require-task)
       REQUIRE_TASK=1
+      shift
+      ;;
+    --fresh-tree)
+      FRESH_TREE=1
       shift
       ;;
     --help|-h)
@@ -382,6 +388,12 @@ while true; do
       ITERATION=$((ITERATION + 1))
       continue
     fi
+  fi
+
+  if [[ "$FRESH_TREE" -eq 1 ]]; then
+    git fetch origin >/dev/null 2>&1 || true
+    git reset --hard "$BASE_REF" >/dev/null 2>&1 || true
+    git clean -fd >/dev/null 2>&1 || true
   fi
 
   build_prompt "$TASK_PATH"

@@ -561,7 +561,12 @@ private:
   int squareWordCountBonus(const CoordinateList& wordSequence) const {
     int bonus = 0;
     for (const auto& cell : wordSequence) {
-      bonus += mSquareWordCounts.get(cell.first, cell.second);
+      const int squareWordCount = mSquareWordCounts.get(cell.first, cell.second);
+      // Keep rich lanes like GLAMORIZE near-full strength, but slightly discount the most
+      // overloaded overlap hubs where dozens of extra local continuations often share the same cells.
+      bonus += squareWordCount <= 200
+        ? squareWordCount
+        : 200 + ((squareWordCount - 200) * 15) / 16;
     }
     return bonus / kSquareWordCountDivisor;
   }

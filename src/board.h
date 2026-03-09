@@ -23,6 +23,7 @@ const int kWordProgressWeight = 32;
 const int kBombTouchWeight = 96;
 const int kMegabombTouchWeight = 192;
 const int kSquareWordCountDivisor = 1;
+const int kFutureMoveDiversityDivisor = 2;
 
 // One operation that we do a lot is merge LegalWordLists together - which correspond to different moves to evaluate.
 // Since our goal is to evaluate moves in an order that prunes our search the most, we do some work up front so that
@@ -277,6 +278,8 @@ class BoardStatic {
   CoordinateList mMegabombs;
 
   Grid<int, kBoardHeight, kBoardWidth> mSquareWordCounts;
+  std::vector<int> mLegalWordScratchGeneration;
+  int mCurrentScratchGeneration;
   
 public:
   std::vector<char> mGrid;
@@ -288,7 +291,7 @@ public:
   //   width kBoardWidth. They should be lower case characters. A * or a + before an item
   //   means bomb and megabomb.
   // dictionary
-  BoardStatic(const std::string& gridText, const WordDictionary& dictionary) : mDictionary(dictionary) {
+  BoardStatic(const std::string& gridText, const WordDictionary& dictionary) : mDictionary(dictionary), mCurrentScratchGeneration(0) {
     // Build a new grid from the string, ignore spaces.
     int y = 0;
     int x = 0;
@@ -313,6 +316,7 @@ public:
     
     findLegalWordsForGrid();
     initializeSquareWordCounts();
+    mLegalWordScratchGeneration.assign(mLegalWordFactory.getSize(), 0);
     recomputeLegalWordGoodness();
     mLegalWordFactory.finalizeEquivalentWordIds();
     mLegalWordFactory.renumberByGoodness();
@@ -410,6 +414,9 @@ private:
       LegalWord& legalWord = mLegalWordFactory.mutableWord(legalWordId);
       legalWord.mMaximizerGoodness = maximizerGoodness(legalWord.mWordSequence);
       legalWord.mMinimizerGoodness = minimizerGoodness(legalWord.mWordSequence);
+      const int diversityBonus = futureMoveDiversityBonus(legalWord.mWordSequence);
+      legalWord.mMaximizerGoodness += diversityBonus;
+      legalWord.mMinimizerGoodness += diversityBonus;
     }
   }
 
@@ -428,6 +435,27 @@ private:
       bonus += mSquareWordCounts.get(cell.first, cell.second);
     }
     return bonus / kSquareWordCountDivisor;
+  }
+
+  int futureMoveDiversityBonus(const CoordinateList& wordSequence) {
+    ++mCurrentScratchGeneration;
+    if (mCurrentScratchGeneration == 0) {
+      std::fill(mLegalWordScratchGeneration.begin(), mLegalWordScratchGeneration.end(), 0);
+      mCurrentScratchGeneration = 1;
+    }
+
+    int uniqueMoves = 0;
+    for (const auto& cell : wordSequence) {
+      const LegalWordList& legalWordList = mLegalWords.get(cell.first, cell.second);
+      for (auto legalWordId : legalWordList) {
+        if (mLegalWordScratchGeneration[legalWordId] != mCurrentScratchGeneration) {
+          mLegalWordScratchGeneration[legalWordId] = mCurrentScratchGeneration;
+          ++uniqueMoves;
+        }
+      }
+    }
+
+    return uniqueMoves / kFutureMoveDiversityDivisor;
   }
 
   int maximizerGoodness(const CoordinateList& wordSequence) const {

@@ -39,6 +39,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 option(WORDBASE_USE_TORCH "Enable LibTorch neural evaluation" OFF)
+option(WORDBASE_USE_SIMD "Enable AVX2 SIMD optimizations for hot paths" OFF)
 
 find_package(Boost 1.45 REQUIRED COMPONENTS timer)
 find_package(OpenSSL REQUIRED)
@@ -130,3 +131,16 @@ target_link_libraries(wordbase-driver PRIVATE
   ${OPENSSL_LIBRARIES}
   ${WORDBASE_SQLITE3_LIBRARY}
   ${WORDBASE_READLINE_LIBRARY})
+
+if (WORDBASE_USE_SIMD)
+  message(STATUS "AVX2 SIMD optimizations enabled")
+  foreach(tgt example perf-test wordbase-driver)
+    target_compile_definitions(${tgt} PRIVATE WORDBASE_USE_SIMD)
+    target_compile_options(${tgt} PRIVATE -mavx2)
+  endforeach()
+endif()
+
+add_executable(test-simd test-simd.cpp)
+target_compile_options(test-simd PRIVATE -mavx2)
+target_compile_definitions(test-simd PRIVATE WORDBASE_USE_SIMD)
+add_test(NAME simd_correctness_test COMMAND test-simd --test)

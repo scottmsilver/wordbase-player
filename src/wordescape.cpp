@@ -28,6 +28,9 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#ifdef WORDBASE_USE_SIMD
+#include <immintrin.h>
+#endif
 
 #include "board.h"
 #include "grid.h"
@@ -227,6 +230,114 @@ static BitBoard bitboard_flood_fill(const BitBoard& seeds, const BitBoard& alive
   }
   return reached;
 }
+
+#ifdef WORDBASE_USE_SIMD
+// --- AVX2 SIMD versions of BitBoard operations ---
+//
+// A BitBoard is 3 x uint64 = 192 bits. We load it into a __m256i with the
+// fourth lane zeroed. All shift/mask/OR operations happen in-register,
+// avoiding per-word scalar loops.
+
+// Load a BitBoard into a __m256i (w[0], w[1], w[2], 0).
+// Uses two 128-bit loads to avoid reading past the struct.
+static inline __m256i bb_load(const BitBoard& b) {
+  __m128i lo = _mm_loadu_si128(reinterpret_cast<const __m128i*>(&b.w[0]));
+  __m128i hi = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&b.w[2]));
+  return _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1);
+}
+
+// Store a __m256i back to a BitBoard (only lanes 0-2).
+static inline void bb_store(BitBoard& b, __m256i v) {
+  __m128i lo = _mm256_castsi256_si128(v);
+  __m128i hi = _mm256_extracti128_si256(v, 1);
+  _mm_storeu_si128(reinterpret_cast<__m128i*>(&b.w[0]), lo);
+  b.w[2] = _mm_extract_epi64(hi, 0);
+}
+
+// Shift right by n bits across the 192-bit value packed in lanes 0-2.
+//
+// Scalar equivalent:
+//   w[0] = (w[0] >> n) | (w[1] << (64-n))
+//   w[1] = (w[1] >> n) | (w[2] << (64-n))
+//   w[2] = w[2] >> n
+//
+// Permute 0x39 = 0b00'11'10'01 maps: dest[0]=src[1], dest[1]=src[2],
+// dest[2]=src[3]=0, dest[3]=src[0] (don't care). This gives us the
+// carry source {w[1], w[2], 0, w[0]}.
+static inline __m256i bb_shr(__m256i v, int n) {
+  __m256i shifted = _mm256_srli_epi64(v, n);
+  __m256i carry_src = _mm256_permute4x64_epi64(v, 0x39);
+  __m256i carry = _mm256_slli_epi64(carry_src, 64 - n);
+  return _mm256_or_si256(shifted, carry);
+}
+
+// Shift left by n bits across the 192-bit value packed in lanes 0-2.
+//
+// Scalar equivalent:
+//   w[0] = w[0] << n
+//   w[1] = (w[1] << n) | (w[0] >> (64-n))
+//   w[2] = (w[2] << n) | (w[1] >> (64-n))
+//
+// Permute 0x93 = 0b10'01'00'11 maps: dest[0]=src[3]=0, dest[1]=src[0],
+// dest[2]=src[1], dest[3]=src[2] (don't care). This gives us the
+// carry source {0, w[0], w[1], w[2]}.
+static inline __m256i bb_shl(__m256i v, int n) {
+  __m256i shifted = _mm256_slli_epi64(v, n);
+  __m256i carry_src = _mm256_permute4x64_epi64(v, 0x93);
+  __m256i carry = _mm256_srli_epi64(carry_src, 64 - n);
+  return _mm256_or_si256(shifted, carry);
+}
+
+static BitBoard expand_all_dirs_simd(const BitBoard& b) {
+  __m256i v = bb_load(b);
+  __m256i nc0 = bb_load(not_col_0);
+  __m256i nc9 = bb_load(not_col_9);
+
+  __m256i result = _mm256_setzero_si256();
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shr(v, 1), nc0));   // right
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shl(v, 1), nc9));   // left
+  result = _mm256_or_si256(result, bb_shr(v, 10));                          // down
+  result = _mm256_or_si256(result, bb_shl(v, 10));                          // up
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shr(v, 11), nc0));  // down-right
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shr(v, 9), nc9));   // down-left
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shl(v, 9), nc0));   // up-right
+  result = _mm256_or_si256(result, _mm256_and_si256(bb_shl(v, 11), nc9));  // up-left
+
+  BitBoard out;
+  bb_store(out, result);
+  return out;
+}
+
+static BitBoard bitboard_flood_fill_simd(const BitBoard& seeds, const BitBoard& alive) {
+  __m256i alive_v = bb_load(alive);
+  __m256i nc0 = bb_load(not_col_0);
+  __m256i nc9 = bb_load(not_col_9);
+  __m256i reached_v = _mm256_and_si256(bb_load(seeds), alive_v);
+  __m256i frontier_v = reached_v;
+
+  while (!_mm256_testz_si256(frontier_v, frontier_v)) {
+    // Inline expand_all_dirs for frontier
+    __m256i expanded = _mm256_setzero_si256();
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shr(frontier_v, 1), nc0));
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shl(frontier_v, 1), nc9));
+    expanded = _mm256_or_si256(expanded, bb_shr(frontier_v, 10));
+    expanded = _mm256_or_si256(expanded, bb_shl(frontier_v, 10));
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shr(frontier_v, 11), nc0));
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shr(frontier_v, 9), nc9));
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shl(frontier_v, 9), nc0));
+    expanded = _mm256_or_si256(expanded, _mm256_and_si256(bb_shl(frontier_v, 11), nc9));
+
+    // expanded &= alive & ~reached
+    expanded = _mm256_andnot_si256(reached_v, _mm256_and_si256(expanded, alive_v));
+    reached_v = _mm256_or_si256(reached_v, expanded);
+    frontier_v = expanded;
+  }
+
+  BitBoard result;
+  bb_store(result, reached_v);
+  return result;
+}
+#endif
 
 boost::arena::obstack gObstack(1024*1024*1024);
 
@@ -836,7 +947,11 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       BitBoard homeEdge = enemyBits & edgeMask;
 
       // Bitboard flood-fill from the enemy home edge.
+#ifdef WORDBASE_USE_SIMD
+      BitBoard connected = bitboard_flood_fill_simd(homeEdge, enemyBits);
+#else
       BitBoard connected = bitboard_flood_fill(homeEdge, enemyBits);
+#endif
 
       // Remove disconnected enemy cells (setCellState also updates bitboards).
       BitBoard disconnected = enemyBits & (~connected);

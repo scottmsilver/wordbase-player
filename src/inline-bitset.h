@@ -3,6 +3,9 @@
 
 #include <cstdint>
 #include <cstring>
+#ifdef WORDBASE_USE_SIMD
+#include <immintrin.h>
+#endif
 
 // Fixed-capacity bitset that avoids heap allocation. Max 8192 bits (1KB).
 //
@@ -50,9 +53,21 @@ struct InlineBitset {
   // per-cell word bitsets into a single "all reachable words" bitset.
   void or_with(const InlineBitset& rhs) {
     const int nwords = (size_bits + 63) >> 6;
+#ifdef WORDBASE_USE_SIMD
+    int w = 0;
+    for (; w + 4 <= nwords; w += 4) {
+      __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&words[w]));
+      __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&rhs.words[w]));
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(&words[w]), _mm256_or_si256(a, b));
+    }
+    for (; w < nwords; w++) {
+      words[w] |= rhs.words[w];
+    }
+#else
     for (int w = 0; w < nwords; w++) {
       words[w] |= rhs.words[w];
     }
+#endif
   }
 };
 

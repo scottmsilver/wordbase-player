@@ -107,6 +107,7 @@ struct BitBoard {
   uint64_t w[3] = {};
 
   void set(int pos) { w[pos >> 6] |= 1ULL << (pos & 63); }
+  void clear(int pos) { w[pos >> 6] &= ~(1ULL << (pos & 63)); }
   bool test(int pos) const { return w[pos >> 6] & (1ULL << (pos & 63)); }
 
   BitBoard operator|(const BitBoard& o) const { return {{w[0]|o.w[0], w[1]|o.w[1], w[2]|o.w[2]}}; }
@@ -155,7 +156,12 @@ struct BitBoard {
 //   not_col_9: all cells NOT in column 9.
 //     Applied after left-shifts (<<1, >>9, <<11) to prevent the leftmost
 //     cell of one row from appearing as column 9 of the previous row.
+//
+//   sRow0Mask / sRow12Mask: all cells in row 0 / row 12 (home edges).
+//     Used to extract home-edge seeds from player bitboards for flood-fill,
+//     avoiding a full grid scan.
 static BitBoard not_col_0, not_col_9;
+static BitBoard sRow0Mask, sRow12Mask;
 static bool bitboard_masks_initialized = false;
 
 static void init_bitboard_masks() {
@@ -165,6 +171,8 @@ static void init_bitboard_masks() {
       int pos = y * kBoardWidth + x;
       if (x != 0) not_col_0.set(pos);
       if (x != kBoardWidth - 1) not_col_9.set(pos);
+      if (y == 0) sRow0Mask.set(pos);
+      if (y == kBoardHeight - 1) sRow12Mask.set(pos);
     }
   }
   bitboard_masks_initialized = true;
@@ -298,6 +306,12 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   uint64_t mTtVerificationKey;
   int mGoodnessAccum;
   bool mTookEnemyCell;
+  // Incrementally maintained bitboards for each player's cells.
+  // Updated in setCellState, used directly in make_move's connectivity
+  // check to avoid scanning all 130 grid cells to build the enemy bitboard.
+  // Cost: 48 extra bytes per state copy (2 × 24 bytes), negligible vs the
+  // 1KB InlineBitset copy. Savings: eliminate 130-cell grid scan per move.
+  BitBoard mPlayer1Bits, mPlayer2Bits;
 
   WordBaseState(BoardStatic* board, char playerToMove)
     : State<WordBaseState, WordBaseMove>(playerToMove),
@@ -314,13 +328,23 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     mHashValue = computeHashFromState();
     mTtVerificationKey = computeVerificationKeyFromState();
     mGoodnessAccum = computeGoodnessAccum();
+    // Initialize player bitboards from the grid state.
+    for (int y = 0; y < kBoardHeight; y++) {
+      for (int x = 0; x < kBoardWidth; x++) {
+        const int pos = y * kBoardWidth + x;
+        const char owner = mState.get(y, x);
+        if (owner == PLAYER_1) mPlayer1Bits.set(pos);
+        else if (owner == PLAYER_2) mPlayer2Bits.set(pos);
+      }
+    }
   }
 
   // Copy constructor.
   WordBaseState(const WordBaseState& rhs) :
   State<WordBaseState, WordBaseMove>(rhs.player_to_move),
   mBoard(rhs.mBoard),
-  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mGoodnessAccum(rhs.mGoodnessAccum), mTookEnemyCell(false) {
+  mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mGoodnessAccum(rhs.mGoodnessAccum), mTookEnemyCell(false),
+  mPlayer1Bits(rhs.mPlayer1Bits), mPlayer2Bits(rhs.mPlayer2Bits) {
   }
 
   WordBaseState clone() const override {
@@ -445,6 +469,13 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
       mGoodnessAccum -= goodnessContrib(currentOwner, y);
       mGoodnessAccum += goodnessContrib(owner, y);
     }
+
+    // Update player bitboards: clear old owner, set new owner.
+    const int pos = y * kBoardWidth + x;
+    if (currentOwner == PLAYER_1) mPlayer1Bits.clear(pos);
+    else if (currentOwner == PLAYER_2) mPlayer2Bits.clear(pos);
+    if (owner == PLAYER_1) mPlayer1Bits.set(pos);
+    else if (owner == PLAYER_2) mPlayer2Bits.set(pos);
 
     mHashValue ^= cellHashToken(y, x, currentOwner);
     mTtVerificationKey ^= cellVerificationToken(y, x, currentOwner);
@@ -787,41 +818,27 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // vs checking both players.
     if (mTookEnemyCell) {
       const char enemy = get_enemy(player_to_move);
-      const int enemyEdge = (enemy == PLAYER_1) ? 0 : (kBoardHeight - 1);
 
-      // Step 1: Scan the grid to build a bitboard of all enemy cells and
-      // identify enemy cells on the home edge as BFS seeds.
+      // Use incrementally maintained bitboards instead of scanning all 130
+      // grid cells. The player bitboards are kept in sync by setCellState,
+      // so they're already up-to-date after recordMove.
       //
       // Example after P1 plays "CAT" capturing (1,1) and (1,2) from P2:
       //
-      //   Grid:               enemyBits (P2=enemy):   homeEdge (P2, row 3):
-      //   1 1 1 1 1  row 0    . . . . .               . . . . .
-      //   . 1 1 . .  row 1    . . . . .               . . . . .
-      //   . 2 . . .  row 2    . 1 . . .               . . . . .
-      //   2 2 2 2 2  row 3    1 1 1 1 1               1 1 1 1 1
+      //   mPlayer2Bits (enemy):    homeEdge (P2, row 3):
+      //   . . . . .                . . . . .
+      //   . . . . .                . . . . .
+      //   . 1 . . .                . . . . .
+      //   1 1 1 1 1                1 1 1 1 1
       //
-      BitBoard enemyBits, homeEdge;
-      for (int y = 0; y < kBoardHeight; y++) {
-        for (int x = 0; x < kBoardWidth; x++) {
-          if (mState.get(y, x) == enemy) {
-            const int pos = y * kBoardWidth + x;
-            enemyBits.set(pos);
-            if (y == enemyEdge) {
-              homeEdge.set(pos);
-            }
-          }
-        }
-      }
+      const BitBoard& enemyBits = (enemy == PLAYER_1) ? mPlayer1Bits : mPlayer2Bits;
+      const BitBoard& edgeMask = (enemy == PLAYER_1) ? sRow0Mask : sRow12Mask;
+      BitBoard homeEdge = enemyBits & edgeMask;
 
-      // Step 2: Bitboard flood-fill from the enemy home edge.
-      // Finds all enemy cells still connected to their home row.
-      // Uses bit-shifts to expand all frontier cells at once (~13 iterations
-      // of 8 shifts on 3 x uint64_t) instead of per-cell stack-based BFS.
+      // Bitboard flood-fill from the enemy home edge.
       BitBoard connected = bitboard_flood_fill(homeEdge, enemyBits);
 
-      // Step 3: Remove disconnected enemy cells.
-      // Any enemy cell NOT reached by the flood-fill has lost its path to
-      // the home edge and is captured (set to unowned).
+      // Remove disconnected enemy cells (setCellState also updates bitboards).
       BitBoard disconnected = enemyBits & (~connected);
       disconnected.for_each_bit([&](int pos) {
         setCellState(pos / kBoardWidth, pos % kBoardWidth, PLAYER_UNOWNED);

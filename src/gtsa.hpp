@@ -17,6 +17,7 @@
  */
 
 #include <boost/math/distributions/binomial.hpp>
+#include <cstring>
 #include <unordered_map>
 #include <functional>
 #include <sys/time.h>
@@ -105,14 +106,19 @@ struct TTEntry {
   int value;
   TTEntryType value_type;
 
-  TTEntry() {}
+  // Zero-initialize verification_key so empty flat-TT slots read as 0,
+  // which won't match any real position's verification key.
+  TTEntry() : verification_key(0) {}
 
-  virtual ~TTEntry() {}
+  // Non-virtual: TTEntry is never used polymorphically. Removing virtual
+  // eliminates the vtable pointer (8 bytes per entry) and allows the
+  // compiler to inline/omit the destructor.
+  ~TTEntry() {}
 
   TTEntry(const M &move, uint64_t verification_key, int depth, int value, TTEntryType value_type) :
   move(move), verification_key(verification_key), depth(depth), value(value), value_type(value_type) {}
 
- std::ostream &to_stream(std::ostream &os) {
+ std::ostream &to_stream(std::ostream &os) const {
 	    return os << "move: " << move << " verification_key: " << verification_key << " depth: " << depth << " value: " << value << " value_type: " << value_type;
   }
 
@@ -349,7 +355,31 @@ struct Minimax : public Algorithm<S, M> {
     }
   };
 
-  std::unordered_map<size_t, TTEntry<M>> transposition_table;
+  // --- Flat (open-addressing) transposition table ---
+  //
+  // Replaces std::unordered_map which allocates a heap node per entry.
+  // With unordered_map, each of the ~225K TT insertions per search turn
+  // triggers a malloc, and when entries are evicted, a corresponding free.
+  // This caused ~7% of total runtime in malloc_consolidate/unlink_chunk.
+  //
+  // The flat table uses a fixed-size power-of-2 array with direct hash
+  // indexing: slot = hash & mask. Collisions use "always replace" policy
+  // (standard in chess engines). Benefits:
+  //   - Zero heap allocations during search
+  //   - Single array access instead of hash bucket → linked list traversal
+  //   - Better cache locality (entries are contiguous in memory)
+  //
+  // Collision detection uses the verification_key already stored in TTEntry
+  // (a 64-bit hash from a different hash function than the index hash).
+  // Empty slots have verification_key == 0 (sentinel). The probability of
+  // a real position having verification_key == 0 is 2^-64, negligible.
+  //
+  // Table size: 2^18 = 256K entries × ~28 bytes ≈ 7 MB (fits in L3 cache).
+  static constexpr size_t TT_SIZE_BITS = 18;
+  static constexpr size_t TT_SIZE = 1ULL << TT_SIZE_BITS;
+  static constexpr size_t TT_MASK = TT_SIZE - 1;
+  std::vector<TTEntry<M>> flat_tt;
+
   double MAX_SECONDS;
   const int MAX_MOVES;
   std::function<int(S*)> get_goodness;
@@ -367,7 +397,7 @@ struct Minimax : public Algorithm<S, M> {
 
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
-  transposition_table(std::unordered_map<size_t, TTEntry<M>>(1000000)),
+  flat_tt(TT_SIZE),
 	  MAX_SECONDS(max_seconds),
 	  MAX_MOVES(max_moves),
 	  get_goodness(get_goodness),
@@ -375,7 +405,7 @@ struct Minimax : public Algorithm<S, M> {
 	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {}
 
   void reset() override {
-    transposition_table.clear();
+    memset(flat_tt.data(), 0, flat_tt.size() * sizeof(TTEntry<M>));
   }
 
   void setMaxSeconds(double seconds) {
@@ -442,7 +472,7 @@ struct Minimax : public Algorithm<S, M> {
         mLastSearchStats.tt_hits = tt_hits;
         mLastSearchStats.tt_exacts = tt_exacts;
         mLastSearchStats.tt_cuts = tt_cuts;
-        mLastSearchStats.tt_size = transposition_table.size();
+        mLastSearchStats.tt_size = TT_SIZE;
         mLastSearchStats.max_depth = max_depth;
         mLastSearchStats.elapsed_seconds = timer.seconds_elapsed();
         mLastSearchStats.nodes_per_second = mLastSearchStats.elapsed_seconds == 0.0 ? 0.0 : nodes / mLastSearchStats.elapsed_seconds;
@@ -458,7 +488,7 @@ struct Minimax : public Algorithm<S, M> {
             << " tt_hits: " << tt_hits
             << " tt_exacts: " << tt_exacts
             << " tt_cuts: " << tt_cuts
-            << " tt_size: " << transposition_table.size()
+            << " tt_size: " << TT_SIZE
             << " max_depth: " << max_depth << std::endl;
         }
       }
@@ -583,22 +613,28 @@ struct Minimax : public Algorithm<S, M> {
 
   Random random;
 
+  // Look up a position in the flat transposition table.
+  //
+  // Example: state has hash=0xABCD1234, verification_key=0x9876...
+  //   slot index = 0xABCD1234 & 0x3FFFF = 0x1234  (lower 18 bits)
+  //   flat_tt[0x1234].verification_key == 0x9876... ?
+  //     yes → entry found (same position, or astronomically unlikely collision)
+  //     no  → miss (slot empty or holds a different position)
   bool get_tt_entry(S *state, TTEntry<M> &entry) {
     auto key = state->hash();
-    auto it = transposition_table.find(key);
-    if (it == transposition_table.end()) {
+    auto& slot = flat_tt[key & TT_MASK];
+    if (slot.verification_key != state->tt_verification_key()) {
       return false;
     }
-    if (it->second.verification_key != state->tt_verification_key()) {
-      return false;
-    }
-    entry = it->second;
+    entry = slot;
     return true;
   }
 
+  // Store a position in the flat TT. "Always replace" policy: if the slot
+  // is occupied by a different position, it's silently overwritten.
   void add_tt_entry(S *state, const TTEntry<M> &entry) {
     auto key = state->hash();
-    transposition_table[key] = entry;
+    flat_tt[key & TT_MASK] = entry;
   }
 
   void update_tt(S *state, int alpha, int beta, int max_goodness, M &best_move, int depth) {

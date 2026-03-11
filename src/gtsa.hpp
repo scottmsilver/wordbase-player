@@ -648,24 +648,27 @@ struct Minimax : public Algorithm<S, M> {
       auto snap = state->takeSnapshot(move);
       state->mSearchDepthRemaining = depth;
       state->make_move(move);
-      int goodness = -minimax(
-				    state,
-				    depth - 1 - reduction,
-				    -beta,
-				    -alpha,
-				    indent + 1,
-				    move.mLegalWordId).goodness;
 
-      // LMR re-search: if the reduced search improved alpha, the move
-      // might be better than we thought — re-search at full depth.
-      if (reduction > 0 && goodness > alpha) {
-	goodness = -minimax(
-				    state,
-				    depth - 1,
-				    -beta,
-				    -alpha,
-				    indent + 1,
-				    move.mLegalWordId).goodness;
+      int goodness;
+      // PVS: first move gets full window; subsequent moves get null window.
+      if (moves_searched == 0) {
+	goodness = -minimax(state, depth - 1, -beta, -alpha,
+			    indent + 1, move.mLegalWordId).goodness;
+      } else {
+	// Null window search (with optional LMR reduction).
+	goodness = -minimax(state, depth - 1 - reduction, -alpha - 1, -alpha,
+			    indent + 1, move.mLegalWordId).goodness;
+	// Re-search with full window if null window failed high.
+	if (goodness > alpha && goodness < beta) {
+	  // If LMR was applied, re-search at full depth too.
+	  goodness = -minimax(state, depth - 1, -beta, -alpha,
+			      indent + 1, move.mLegalWordId).goodness;
+	} else if (reduction > 0 && goodness > alpha) {
+	  // LMR reduced search beat alpha but also beat beta — still
+	  // re-search at full depth to get accurate score.
+	  goodness = -minimax(state, depth - 1, -beta, -alpha,
+			      indent + 1, move.mLegalWordId).goodness;
+	}
       }
 
       ++moves_searched;

@@ -503,7 +503,7 @@ namespace {
     // Count non-empty TT entries.
     int populated = 0;
     for (size_t i = 0; i < TT_SIZE; i++) {
-      if (sharedTT[i].verification_key != 0) populated++;
+      if (sharedTT[i].data != 0) populated++;
     }
     EXPECT_GT(populated, 0) << "First engine should have populated the shared TT";
 

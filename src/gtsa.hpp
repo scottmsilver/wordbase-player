@@ -98,32 +98,83 @@ struct Move {
 
 enum TTEntryType { EXACT_VALUE, LOWER_BOUND, UPPER_BOUND };
 
+// Bit-packed TT entry: exactly 8 bytes (64 bits).
+// 8 entries per 64-byte cache line (was ~2 at 32 bytes original).
+//
+// Bit layout:
+//   [63:32] verification_key  32 bits — truncated position hash
+//   [31:19] move              13 bits — LegalWordId (max 8191)
+//   [18:7]  value             12 bits — signed eval (±2047, ±INF → ±2000)
+//   [6:2]   depth              5 bits — search depth (max 31)
+//   [1:0]   value_type         2 bits — EXACT/LOWER/UPPER
+//
+// Note: tightly coupled to WordBaseMove (accesses mLegalWordId directly).
 template<class M>
 struct TTEntry {
-  M move;
-  uint64_t verification_key;
-  int depth;
-  int value;
-  TTEntryType value_type;
+  uint64_t data;
 
-  // Zero-initialize verification_key so empty flat-TT slots read as 0,
-  // which won't match any real position's verification key.
-  TTEntry() : verification_key(0) {}
+  static constexpr int VALUE_INF = 2000;  // sentinel for ±INF in 12-bit field
 
-  // Non-virtual: TTEntry is never used polymorphically. Removing virtual
-  // eliminates the vtable pointer (8 bytes per entry) and allows the
-  // compiler to inline/omit the destructor.
-  ~TTEntry() {}
+  TTEntry() : data(0) {}
 
-  TTEntry(const M &move, uint64_t verification_key, int depth, int value, TTEntryType value_type) :
-  move(move), verification_key(verification_key), depth(depth), value(value), value_type(value_type) {}
+  // moveId must be < 8192, depth must be <= 31. Values outside range are
+  // silently masked. Non-terminal eval values must be in [-1999, 1999];
+  // values near ±INF are mapped to the ±2000 sentinel.
+  TTEntry(const M &move, uint64_t vkey, int depth, int value, TTEntryType vtype)
+    : data(pack(static_cast<uint32_t>(vkey), move.mLegalWordId, value, depth, vtype)) {}
 
- std::ostream &to_stream(std::ostream &os) const {
-	    return os << "move: " << move << " verification_key: " << verification_key << " depth: " << depth << " value: " << value << " value_type: " << value_type;
+  M get_move() const {
+    M m;
+    m.mLegalWordId = static_cast<int>((data >> 19) & 0x1FFF);
+    return m;
+  }
+
+  int get_depth() const {
+    return static_cast<int>((data >> 2) & 0x1F);
+  }
+
+  int get_value() const {
+    int raw = static_cast<int>((data >> 7) & 0xFFF);
+    if (raw & 0x800) raw |= ~0xFFF;  // sign-extend 12 bits
+    if (raw >= VALUE_INF) return INF;
+    if (raw <= -VALUE_INF) return -INF;
+    return raw;
+  }
+
+  TTEntryType get_value_type() const {
+    return static_cast<TTEntryType>(data & 0x3);
+  }
+
+  // Compare stored verification key (upper 32 bits of data) against
+  // the lower 32 bits of the full 64-bit position key.
+  bool matches(uint64_t full_key) const {
+    return (data >> 32) == (full_key & 0xFFFFFFFF);
+  }
+
+  std::ostream &to_stream(std::ostream &os) const {
+    return os << "move: " << get_move() << " verification_key: " << (data >> 32)
+              << " depth: " << get_depth() << " value: " << get_value()
+              << " value_type: " << get_value_type();
   }
 
   friend std::ostream &operator<<(std::ostream &os, const TTEntry &entry) {
     return entry.to_stream(os);
+  }
+
+private:
+  static uint64_t pack(uint32_t vkey, int moveId, int value, int depth, TTEntryType vtype) {
+    int pv = packValue(value);
+    return (static_cast<uint64_t>(vkey) << 32)
+         | (static_cast<uint64_t>(moveId & 0x1FFF) << 19)
+         | (static_cast<uint64_t>(pv & 0xFFF) << 7)
+         | (static_cast<uint64_t>(depth & 0x1F) << 2)
+         | (static_cast<uint64_t>(vtype & 0x3));
+  }
+
+  static int packValue(int v) {
+    if (v >= INF - 1000) return VALUE_INF;
+    if (v <= -INF + 1000) return -VALUE_INF;
+    return v;
   }
 };
 
@@ -382,12 +433,12 @@ struct Minimax : public Algorithm<S, M> {
   //   - Single array access instead of hash bucket → linked list traversal
   //   - Better cache locality (entries are contiguous in memory)
   //
-  // Collision detection uses the verification_key already stored in TTEntry
-  // (a 64-bit hash from a different hash function than the index hash).
+  // Collision detection uses the verification_key stored in TTEntry
+  // (32-bit truncation of a 64-bit hash, independent from the index hash).
   // Empty slots have verification_key == 0 (sentinel). The probability of
-  // a real position having verification_key == 0 is 2^-64, negligible.
+  // a real position having verification_key == 0 is 2^-32, negligible.
   //
-  // Table size: 2^18 = 256K entries × ~28 bytes ≈ 7 MB (fits in L3 cache).
+  // Table size: 2^18 = 256K entries × 8 bytes = 2 MB (fits in L3 cache).
   static constexpr size_t DEFAULT_TT_SIZE_BITS = 18;
   static constexpr size_t TT_SIZE_BITS = DEFAULT_TT_SIZE_BITS;  // legacy alias
   static constexpr size_t TT_SIZE = 1ULL << DEFAULT_TT_SIZE_BITS;
@@ -612,22 +663,22 @@ struct Minimax : public Algorithm<S, M> {
     // If isValidMove becomes a bottleneck, we could restrict this check
     // to EXACT_VALUE entries only (those skip the search entirely).
     // Bounds entries with wrong values just cause suboptimal pruning.
-    if (mUseTranspositionTable && entry_found && entry.depth >= depth
-        && state->isValidMove(entry.move)) {
+    if (mUseTranspositionTable && entry_found && entry.get_depth() >= depth
+        && state->isValidMove(entry.get_move())) {
       ++tt_hits;
-      if (entry.value_type == TTEntryType::EXACT_VALUE) {
+      if (entry.get_value_type() == TTEntryType::EXACT_VALUE) {
         ++tt_exacts;
-        return {entry.value, entry.move, true};
+        return {entry.get_value(), entry.get_move(), true};
       }
-      if (entry.value_type == TTEntryType::LOWER_BOUND && alpha < entry.value) {
-        alpha = entry.value;
+      if (entry.get_value_type() == TTEntryType::LOWER_BOUND && alpha < entry.get_value()) {
+        alpha = entry.get_value();
       }
-      if (entry.value_type == TTEntryType::UPPER_BOUND && beta > entry.value) {
-        beta = entry.value;
+      if (entry.get_value_type() == TTEntryType::UPPER_BOUND && beta > entry.get_value()) {
+        beta = entry.get_value();
       }
       if (alpha >= beta) {
         ++tt_cuts;
-        return {entry.value, entry.move, true};
+        return {entry.get_value(), entry.get_move(), true};
       }
     }
 
@@ -748,9 +799,9 @@ struct Minimax : public Algorithm<S, M> {
     // of runtime) at nodes where a privileged move causes a cutoff.
     if (indent > 0) {
       // Stage 1: TT move.
-      if (entry_found && state->isValidMove(entry.move)) {
-	staged_ids[num_staged++] = entry.move.mLegalWordId;
-	searchMove(entry.move);
+      if (entry_found && state->isValidMove(entry.get_move())) {
+	staged_ids[num_staged++] = entry.get_move().mLegalWordId;
+	searchMove(entry.get_move());
       }
 
       // Stage 2: Killer moves.
@@ -796,9 +847,9 @@ struct Minimax : public Algorithm<S, M> {
       // At root: promote TT/killers/CM to front (no staging at root).
       if (indent == 0 && !legal_moves.empty()) {
 	int front = 0;
-	if (mUseTranspositionTable && entry_found && state->isValidMove(entry.move)) {
+	if (mUseTranspositionTable && entry_found && state->isValidMove(entry.get_move())) {
 	  for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
-	    if (legal_moves[i].mLegalWordId == entry.move.mLegalWordId) {
+	    if (legal_moves[i].mLegalWordId == entry.get_move().mLegalWordId) {
 	      std::swap(legal_moves[front], legal_moves[i]);
 	      front++;
 	      break;
@@ -911,7 +962,7 @@ struct Minimax : public Algorithm<S, M> {
     auto key = state->hash();
     TTEntry<M>* tt = mSharedTTPtr ? mSharedTTPtr : flat_tt.data();
     auto& slot = tt[key & mTTMask];
-    if (slot.verification_key != state->tt_verification_key()) {
+    if (!slot.matches(state->tt_verification_key())) {
       return false;
     }
     entry = slot;

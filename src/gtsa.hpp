@@ -631,14 +631,22 @@ struct Minimax : public Algorithm<S, M> {
       }
     }
 
-    // Futility pruning: at shallow depths, if the static eval is far
-    // below alpha, late moves are unlikely to raise it enough. We skip
-    // them (but always search the first few moves and staged moves).
+    // Static eval for pruning decisions (computed once, shared).
     static constexpr int FUTILITY_MARGIN_D1 = 200;
     static constexpr int FUTILITY_MARGIN_D2 = 500;
+    static constexpr int RFP_MARGIN_D1 = 100;
+    static constexpr int RFP_MARGIN_D2 = 300;
     bool canFutilityPrune = false;
     if (indent > 0 && depth <= 2 && alpha > -INF + 1000 && beta < INF - 1000) {
       int staticEval = get_goodness ? get_goodness(state) : state->get_goodness();
+      // Reverse futility pruning: if eval is far above beta, prune
+      // the entire node — no move can make it worse enough.
+      int rfpMargin = (depth == 1) ? RFP_MARGIN_D1 : RFP_MARGIN_D2;
+      if (staticEval - rfpMargin >= beta) {
+        return {staticEval, best_move, true};
+      }
+      // Forward futility pruning: if eval is far below alpha, skip
+      // late moves (but always search the first few + staged moves).
       int margin = (depth == 1) ? FUTILITY_MARGIN_D1 : FUTILITY_MARGIN_D2;
       canFutilityPrune = (staticEval + margin <= alpha);
     }

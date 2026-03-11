@@ -582,7 +582,7 @@ struct Minimax : public Algorithm<S, M> {
       state->fill_legal_moves(legal_moves, MAX_MOVES);
 
       // Promote TT move, killer moves, and high-history moves to the front.
-      // This is the key move ordering improvement: TT > killers > history > heuristic.
+      // This is the key move ordering improvement: TT > killers > countermove > history > heuristic.
       if (indent > 0 && !legal_moves.empty()) {
         int front = 0;
 
@@ -665,7 +665,7 @@ struct Minimax : public Algorithm<S, M> {
 	  mCurrentRootScores.push_back({legal_moves[i], goodness});
 	}
 
-	if (timer.exceeded(MAX_SECONDS)) {
+	if ((nodes & 4095) == 0 && timer.exceeded(MAX_SECONDS)) {
 	  completed = false;
 	  break;
 	}

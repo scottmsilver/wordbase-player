@@ -391,9 +391,28 @@ struct Minimax : public Algorithm<S, M> {
   bool mUseTranspositionTable;
   std::ostream* mTraceStream;
   SearchStats mLastSearchStats;
-  std::function<void(S*, std::vector<M>&)> mMoveReorderer;
   std::vector<M> mCachedRootMoves;
   bool mHasCachedRootMoves = false;
+
+  // Killer moves: two moves per ply that caused beta cutoffs.
+  // Killer moves are tried right after the TT move, before heuristic ordering.
+  static constexpr int MAX_PLY = 64;
+  static constexpr int NUM_KILLERS = 2;
+  M mKillers[MAX_PLY][NUM_KILLERS];
+  bool mKillerValid[MAX_PLY][NUM_KILLERS];
+
+  // History heuristic: tracks how often each LegalWordId causes cutoffs.
+  // Used as a secondary sort key when no TT or killer move is available.
+  // Indexed by LegalWordId. Capped at reasonable size.
+  static constexpr int HISTORY_TABLE_SIZE = 65536;
+  int mHistory[HISTORY_TABLE_SIZE];
+
+  struct RootMoveScore {
+    M move;
+    int score;
+  };
+  std::vector<RootMoveScore> mCurrentRootScores;
+  std::vector<RootMoveScore> mLastCompletedRootScores;
 
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
@@ -402,7 +421,10 @@ struct Minimax : public Algorithm<S, M> {
 	  MAX_MOVES(max_moves),
 	  get_goodness(get_goodness),
 	  timer(Timer()),
-	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {}
+	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {
+    memset(mKillerValid, 0, sizeof(mKillerValid));
+    memset(mHistory, 0, sizeof(mHistory));
+  }
 
   void reset() override {
     memset(flat_tt.data(), 0, flat_tt.size() * sizeof(TTEntry<M>));
@@ -428,9 +450,7 @@ struct Minimax : public Algorithm<S, M> {
     return mLastSearchStats;
   }
 
-  void setMoveReorderer(std::function<void(S*, std::vector<M>&)> reorderer) {
-    mMoveReorderer = reorderer;
-  }
+  const std::vector<RootMoveScore>& getLastRootScores() const { return mLastCompletedRootScores; }
 
   M get_move(S *state) override {
     if (state->is_terminal()) {
@@ -440,16 +460,16 @@ struct Minimax : public Algorithm<S, M> {
     }
     timer.start();
     mLastSearchStats = SearchStats();
-    // Pre-compute neural move ordering for the root, if available.
-    if (mMoveReorderer) {
-      mCachedRootMoves = state->get_legal_moves(MAX_MOVES);
-      mMoveReorderer(state, mCachedRootMoves);
-      mHasCachedRootMoves = true;
-    } else {
-      mHasCachedRootMoves = false;
-    }
+    // Clear killer moves for this search (but keep history — it persists across ID iterations).
+    memset(mKillerValid, 0, sizeof(mKillerValid));
+    // Age the history table: halve all values to prevent overflow and
+    // let recent iterations dominate.
+    for (int i = 0; i < HISTORY_TABLE_SIZE; ++i) mHistory[i] >>= 1;
+    mHasCachedRootMoves = false;
     M best_move;
+    mLastCompletedRootScores.clear();
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
+      mCurrentRootScores.clear();
       LOG(DEBUG) << " { ---------------------d(" << max_depth << ")------------------------------------" << std::endl;
       beta_cuts = 0;
       cut_bf_sum = 0;
@@ -463,6 +483,7 @@ struct Minimax : public Algorithm<S, M> {
       auto result = minimax(state, max_depth, -INF, INF, 0);
       if (result.completed) {
         best_move = result.best_move;
+        mLastCompletedRootScores = mCurrentRootScores;
         mLastSearchStats.completed = true;
         mLastSearchStats.goodness = result.goodness;
         mLastSearchStats.nodes = nodes;
@@ -553,6 +574,51 @@ struct Minimax : public Algorithm<S, M> {
       : depth_move_buffers[indent];
     if (!(indent == 0 && mHasCachedRootMoves)) {
       state->fill_legal_moves(legal_moves, MAX_MOVES);
+
+      // Promote TT move, killer moves, and high-history moves to the front.
+      // This is the key move ordering improvement: TT > killers > history > heuristic.
+      if (indent > 0 && !legal_moves.empty()) {
+        int front = 0;
+
+        // 1. TT move first (from shallow entries that didn't cause a cutoff above).
+        if (mUseTranspositionTable && entry_found && state->isValidMove(entry.move)) {
+          for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+            if (legal_moves[i].mLegalWordId == entry.move.mLegalWordId) {
+              std::swap(legal_moves[front], legal_moves[i]);
+              front++;
+              break;
+            }
+          }
+        }
+
+        // 2. Killer moves next.
+        for (int k = 0; k < NUM_KILLERS && indent < MAX_PLY; k++) {
+          if (mKillerValid[indent][k]) {
+            int killerId = mKillers[indent][k].mLegalWordId;
+            for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+              if (legal_moves[i].mLegalWordId == killerId) {
+                std::swap(legal_moves[front], legal_moves[i]);
+                front++;
+                break;
+              }
+            }
+          }
+        }
+
+        // 3. Sort remaining moves by history score, but only at nodes with
+        //    enough remaining depth to amortize the sort cost.
+        if (depth >= 3 && front < static_cast<int>(legal_moves.size())) {
+          const int* hist = mHistory;
+          std::stable_sort(legal_moves.begin() + front, legal_moves.end(),
+            [hist](const M& a, const M& b) {
+              int ha = (a.mLegalWordId >= 0 && a.mLegalWordId < HISTORY_TABLE_SIZE)
+                       ? hist[a.mLegalWordId] : 0;
+              int hb = (b.mLegalWordId >= 0 && b.mLegalWordId < HISTORY_TABLE_SIZE)
+                       ? hist[b.mLegalWordId] : 0;
+              return ha > hb;
+            });
+        }
+      }
     }
 
     assert(legal_moves.size() > 0);
@@ -575,6 +641,10 @@ struct Minimax : public Algorithm<S, M> {
 				      indent + 1).goodness;
 	VLOG(9) << *state << std::endl;
 
+	if (indent == 0) {
+	  mCurrentRootScores.push_back({legal_moves[i], goodness});
+	}
+
 	if (timer.exceeded(MAX_SECONDS)) {
 	  completed = false;
 	  break;
@@ -588,6 +658,21 @@ struct Minimax : public Algorithm<S, M> {
 	  if (max_goodness >= beta) {
 	    ++beta_cuts;
 	    cut_bf_sum += i + 1;
+	    // Record killer move (only non-TT moves).
+	    if (indent < MAX_PLY) {
+	      if (!mKillerValid[indent][0] ||
+	          mKillers[indent][0].mLegalWordId != move.mLegalWordId) {
+	        mKillers[indent][1] = mKillers[indent][0];
+	        mKillerValid[indent][1] = mKillerValid[indent][0];
+	        mKillers[indent][0] = move;
+	        mKillerValid[indent][0] = true;
+	      }
+	    }
+	    // Update history: reward the cutoff move.
+	    int id = move.mLegalWordId;
+	    if (id >= 0 && id < HISTORY_TABLE_SIZE) {
+	      mHistory[id] += depth * depth;
+	    }
 	    break;
 	  }
 	}

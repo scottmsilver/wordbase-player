@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 #include "easylogging++.h"
 #include "word-dictionary.h"
 #include "wordescape.cpp"
-
-#ifdef HAS_TORCH
-#include "neural-eval.h"
-#endif
 
 INITIALIZE_EASYLOGGINGPP
 
@@ -34,7 +31,6 @@ struct PerfOptions {
   std::string selfplayOutPath;
   bool useTranspositionTable = true;
   bool printBoards = false;
-  std::string neuralModelPath;
 };
 
 struct AggregateStats {
@@ -78,9 +74,6 @@ void printUsage(const char* argv0) {
     << "  --selfplay-out <path>    Write self-play JSONL to this file\n"
     << "  --no-tt                  Disable the transposition table\n"
     << "  --print-boards           Print the board after each move\n"
-#ifdef HAS_TORCH
-    << "  --neural-model <path>    Use neural network for leaf evaluation\n"
-#endif
     ;
 }
 
@@ -112,8 +105,6 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.selfplayGames = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--selfplay-out" && index < argc) {
       options.selfplayOutPath = argv[index++];
-    } else if (arg == "--neural-model" && index < argc) {
-      options.neuralModelPath = argv[index++];
     } else if (arg == "--no-tt") {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
@@ -245,51 +236,11 @@ int main(int argc, char** argv) {
     BoardStatic board(options.boardText, dictionary);
     WordBaseState state(&board, PLAYER_1);
 
-#ifdef HAS_TORCH
-    std::unique_ptr<NeuralEvaluator> neuralEval;
-    if (!options.neuralModelPath.empty()) {
-      neuralEval = std::make_unique<NeuralEvaluator>(options.neuralModelPath);
-      if (!neuralEval->isLoaded()) {
-        throw std::runtime_error("Failed to load neural model: " + options.neuralModelPath);
-      }
-      std::cout << "neural_eval loaded=" << options.neuralModelPath
-                << " gpu=" << (neuralEval->isGPU() ? "true" : "false") << std::endl;
-      // GPU warmup: run multiple forward passes to fully initialize CUDA kernels
-      neuralEval->warmup(state);
-    }
-#endif
-
-    auto makeAlgorithm = [&options
-#ifdef HAS_TORCH
-                          , &neuralEval
-#endif
-                          ]() {
+    auto makeAlgorithm = [&options]() {
       Minimax<WordBaseState, WordBaseMove> algorithm(options.maxSecondsPerMove, options.maxMovesPerPosition);
       algorithm.setMaxDepth(options.maxDepth);
       algorithm.setUseTranspositionTable(options.useTranspositionTable);
       algorithm.setTraceStream(nullptr);
-#ifdef HAS_TORCH
-      if (neuralEval) {
-        NeuralEvaluator* evalPtr = neuralEval.get();
-        algorithm.setMoveReorderer([evalPtr](WordBaseState* state, std::vector<WordBaseMove>& moves) {
-          // Evaluate all child positions with the value head (single batched GPU pass).
-          auto scores = evalPtr->evaluateMoves(*state, moves);
-          // Sort moves by value score (highest first = best for current player).
-          std::vector<std::pair<int, size_t>> scored(moves.size());
-          for (size_t i = 0; i < moves.size(); i++) {
-            scored[i] = {scores[i], i};
-          }
-          std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
-            return a.first > b.first;
-          });
-          std::vector<WordBaseMove> reordered(moves.size());
-          for (size_t i = 0; i < moves.size(); i++) {
-            reordered[i] = moves[scored[i].second];
-          }
-          moves = std::move(reordered);
-        });
-      }
-#endif
       return algorithm;
     };
 
@@ -316,6 +267,21 @@ int main(int argc, char** argv) {
           const auto& searchStats = algorithm.getLastSearchStats();
           const LegalWord& legalWord = board.getLegalWord(move.mLegalWordId);
 
+          // Build move_scores JSON array from root move evaluations
+          const auto& rootScores = algorithm.getLastRootScores();
+          std::string moveScoresJson = "[";
+          for (size_t si = 0; si < rootScores.size(); ++si) {
+            const auto& rs = rootScores[si];
+            const LegalWord& rsWord = board.getLegalWord(rs.move.mLegalWordId);
+            if (si > 0) moveScoresJson += ",";
+            moveScoresJson += "[";
+            moveScoresJson += std::to_string(rs.score);
+            moveScoresJson += ",\"";
+            moveScoresJson += serializePath(rsWord.mWordSequence);
+            moveScoresJson += "\"]";
+          }
+          moveScoresJson += "]";
+
           out
             << "{"
             << "\"type\":\"move\","
@@ -333,7 +299,9 @@ int main(int argc, char** argv) {
             << "\"beta_cuts\":" << searchStats.beta_cuts << ","
             << "\"tt_hits\":" << searchStats.tt_hits << ","
             << "\"nps\":" << searchStats.nodes_per_second << ","
-            << "\"seconds\":" << moveSeconds
+            << "\"seconds\":" << moveSeconds << ","
+            << "\"score\":" << searchStats.goodness << ","
+            << "\"move_scores\":" << moveScoresJson
             << "}"
             << "\n";
 

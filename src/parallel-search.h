@@ -16,14 +16,17 @@ struct ParallelSearchBase : public Algorithm<S, M> {
   int mMaxMoves;
   int mMaxDepth;
   bool mUseTranspositionTable;
+  size_t mTTSizeBits;
   std::function<int(S*)> mGetGoodness;
   typename Minimax<S, M>::SearchStats mLastSearchStats;
 
   ParallelSearchBase(int numThreads, double maxSeconds, int maxMoves = INF,
                      int maxDepth = MAX_DEPTH, bool useTT = true,
+                     size_t ttSizeBits = Minimax<S, M>::DEFAULT_TT_SIZE_BITS,
                      std::function<int(S*)> getGoodness = nullptr)
     : mNumThreads(numThreads), mMaxSeconds(maxSeconds), mMaxMoves(maxMoves),
-      mMaxDepth(maxDepth), mUseTranspositionTable(useTT), mGetGoodness(getGoodness) {}
+      mMaxDepth(maxDepth), mUseTranspositionTable(useTT), mTTSizeBits(ttSizeBits),
+      mGetGoodness(getGoodness) {}
 
   const typename Minimax<S, M>::SearchStats& getLastSearchStats() const {
     return mLastSearchStats;
@@ -40,6 +43,7 @@ protected:
                        const std::vector<M>* rootMoves = nullptr) {
     engine.setMaxDepth(mMaxDepth);
     engine.setUseTranspositionTable(mUseTranspositionTable);
+    engine.setTTSizeBits(mTTSizeBits);
     engine.setTraceStream(nullptr);
     if (sharedTT) engine.setSharedTT(sharedTT);
     if (rootMoves) engine.setRootMoves(*rootMoves);
@@ -178,7 +182,8 @@ struct LazySMPSearch : public ParallelSearchBase<S, M> {
   using Base::Base;
 
   M get_move(S* state) override {
-    if (mSharedTT.empty()) mSharedTT.resize(Minimax<S, M>::TT_SIZE);
+    size_t ttSize = 1ULL << this->mTTSizeBits;
+    if (mSharedTT.size() != ttSize) mSharedTT.assign(ttSize, TTEntry<M>{});
     else std::fill(mSharedTT.begin(), mSharedTT.end(), TTEntry<M>{});
 
     std::vector<ThreadResult> results(this->mNumThreads);
@@ -223,7 +228,8 @@ struct YBWCSearch : public ParallelSearchBase<S, M> {
     state->fill_legal_moves(allMoves, this->mMaxMoves);
     if (allMoves.empty()) return M();
 
-    if (mSharedTT.empty()) mSharedTT.resize(Minimax<S, M>::TT_SIZE);
+    size_t ttSize = 1ULL << this->mTTSizeBits;
+    if (mSharedTT.size() != ttSize) mSharedTT.assign(ttSize, TTEntry<M>{});
     else std::fill(mSharedTT.begin(), mSharedTT.end(), TTEntry<M>{});
 
     // Non-PV moves for workers (skip move[0], the expected best).

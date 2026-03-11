@@ -388,9 +388,14 @@ struct Minimax : public Algorithm<S, M> {
   // a real position having verification_key == 0 is 2^-64, negligible.
   //
   // Table size: 2^18 = 256K entries × ~28 bytes ≈ 7 MB (fits in L3 cache).
-  static constexpr size_t TT_SIZE_BITS = 18;
-  static constexpr size_t TT_SIZE = 1ULL << TT_SIZE_BITS;
+  static constexpr size_t DEFAULT_TT_SIZE_BITS = 18;
+  static constexpr size_t TT_SIZE_BITS = DEFAULT_TT_SIZE_BITS;  // legacy alias
+  static constexpr size_t TT_SIZE = 1ULL << DEFAULT_TT_SIZE_BITS;
   static constexpr size_t TT_MASK = TT_SIZE - 1;
+
+  size_t mTTSizeBits;
+  size_t mTTSize;
+  size_t mTTMask;
   std::vector<TTEntry<M>> flat_tt;
   // External TT for shared-TT parallel modes (Lazy SMP, YBWC).
   // When non-null, TT operations use this instead of flat_tt.
@@ -443,7 +448,10 @@ struct Minimax : public Algorithm<S, M> {
 
   Minimax(double max_seconds = 10, int max_moves = INF, std::function<int(S*)> get_goodness = nullptr) :
   Algorithm<S, M>(),
-  flat_tt(TT_SIZE),
+  mTTSizeBits(DEFAULT_TT_SIZE_BITS),
+  mTTSize(1ULL << DEFAULT_TT_SIZE_BITS),
+  mTTMask((1ULL << DEFAULT_TT_SIZE_BITS) - 1),
+  flat_tt(1ULL << DEFAULT_TT_SIZE_BITS),
 	  MAX_SECONDS(max_seconds),
 	  MAX_MOVES(max_moves),
 	  get_goodness(get_goodness),
@@ -466,6 +474,15 @@ struct Minimax : public Algorithm<S, M> {
 
   void setMaxDepth(int depth) {
     mMaxDepth = depth;
+  }
+
+  void setTTSizeBits(size_t bits) {
+    mTTSizeBits = bits;
+    mTTSize = 1ULL << bits;
+    mTTMask = mTTSize - 1;
+    if (!mSharedTTPtr) {
+      flat_tt.assign(mTTSize, TTEntry<M>{});
+    }
   }
 
   void setUseTranspositionTable(bool useTranspositionTable) {
@@ -542,7 +559,7 @@ struct Minimax : public Algorithm<S, M> {
         mLastSearchStats.tt_hits = tt_hits;
         mLastSearchStats.tt_exacts = tt_exacts;
         mLastSearchStats.tt_cuts = tt_cuts;
-        mLastSearchStats.tt_size = TT_SIZE;
+        mLastSearchStats.tt_size = mTTSize;
         mLastSearchStats.max_depth = max_depth;
         mLastSearchStats.elapsed_seconds = timer.seconds_elapsed();
         mLastSearchStats.nodes_per_second = mLastSearchStats.elapsed_seconds == 0.0 ? 0.0 : nodes / mLastSearchStats.elapsed_seconds;
@@ -831,7 +848,7 @@ struct Minimax : public Algorithm<S, M> {
   bool get_tt_entry(S *state, TTEntry<M> &entry) {
     auto key = state->hash();
     TTEntry<M>* tt = mSharedTTPtr ? mSharedTTPtr : flat_tt.data();
-    auto& slot = tt[key & TT_MASK];
+    auto& slot = tt[key & mTTMask];
     if (slot.verification_key != state->tt_verification_key()) {
       return false;
     }
@@ -844,7 +861,7 @@ struct Minimax : public Algorithm<S, M> {
   void add_tt_entry(S *state, const TTEntry<M> &entry) {
     auto key = state->hash();
     TTEntry<M>* tt = mSharedTTPtr ? mSharedTTPtr : flat_tt.data();
-    tt[key & TT_MASK] = entry;
+    tt[key & mTTMask] = entry;
   }
 
   void update_tt(S *state, int alpha, int beta, int max_goodness, M &best_move, int depth) {

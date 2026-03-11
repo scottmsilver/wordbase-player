@@ -34,6 +34,7 @@ struct PerfOptions {
   bool printBoards = false;
   int threads = 1;
   std::string parallelMode;  // "", "root", "lazysmp", "ybwc"
+  int ttBits = 18;  // TT size = 2^ttBits entries
 };
 
 struct AggregateStats {
@@ -79,6 +80,7 @@ void printUsage(const char* argv0) {
     << "  --print-boards           Print the board after each move\n"
     << "  --threads <N>            Number of search threads (default 1)\n"
     << "  --parallel-mode <mode>   Parallel strategy: root, lazysmp, ybwc\n"
+    << "  --tt-bits <N>            TT size = 2^N entries (default 18, ~7MB)\n"
     ;
 }
 
@@ -118,6 +120,8 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.threads = std::stoi(argv[index++], nullptr, 0);
     } else if (arg == "--parallel-mode" && index < argc) {
       options.parallelMode = argv[index++];
+    } else if (arg == "--tt-bits" && index < argc) {
+      options.ttBits = std::stoi(argv[index++], nullptr, 0);
     } else {
       printUsage(argv[0]);
       throw std::invalid_argument("Unknown or incomplete argument: " + arg);
@@ -138,6 +142,9 @@ PerfOptions parseArgs(int argc, char** argv) {
   }
   if (options.threads < 1) {
     throw std::invalid_argument("--threads must be >= 1");
+  }
+  if (options.ttBits < 10 || options.ttBits > 28) {
+    throw std::invalid_argument("--tt-bits must be between 10 and 28");
   }
   if (!options.parallelMode.empty() &&
       options.parallelMode != "root" &&
@@ -258,6 +265,7 @@ int main(int argc, char** argv) {
       Minimax<WordBaseState, WordBaseMove> algorithm(options.maxSecondsPerMove, options.maxMovesPerPosition);
       algorithm.setMaxDepth(options.maxDepth);
       algorithm.setUseTranspositionTable(options.useTranspositionTable);
+      algorithm.setTTSizeBits(options.ttBits);
       algorithm.setTraceStream(nullptr);
       return algorithm;
     };
@@ -349,15 +357,15 @@ int main(int argc, char** argv) {
       if (options.parallelMode == "root") {
         parallelAlgo = std::make_unique<RootParallelSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
-          options.maxDepth, options.useTranspositionTable);
+          options.maxDepth, options.useTranspositionTable, options.ttBits);
       } else if (options.parallelMode == "lazysmp") {
         parallelAlgo = std::make_unique<LazySMPSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
-          options.maxDepth, options.useTranspositionTable);
+          options.maxDepth, options.useTranspositionTable, options.ttBits);
       } else if (options.parallelMode == "ybwc") {
         parallelAlgo = std::make_unique<YBWCSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
-          options.maxDepth, options.useTranspositionTable);
+          options.maxDepth, options.useTranspositionTable, options.ttBits);
       }
       std::cout << "parallel_mode=" << options.parallelMode
                 << " threads=" << options.threads << std::endl;

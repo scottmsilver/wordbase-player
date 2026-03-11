@@ -637,13 +637,10 @@ struct Minimax : public Algorithm<S, M> {
     static constexpr int FUTILITY_MARGIN_D1 = 200;
     static constexpr int FUTILITY_MARGIN_D2 = 500;
     bool canFutilityPrune = false;
-    int staticEval = 0;
     if (indent > 0 && depth <= 2 && alpha > -INF + 1000 && beta < INF - 1000) {
-      staticEval = get_goodness ? get_goodness(state) : state->get_goodness();
+      int staticEval = get_goodness ? get_goodness(state) : state->get_goodness();
       int margin = (depth == 1) ? FUTILITY_MARGIN_D1 : FUTILITY_MARGIN_D2;
-      if (staticEval + margin <= alpha) {
-        canFutilityPrune = true;
-      }
+      canFutilityPrune = (staticEval + margin <= alpha);
     }
 
     int max_goodness = -INF;
@@ -673,14 +670,10 @@ struct Minimax : public Algorithm<S, M> {
 	// Null window search (with optional LMR reduction).
 	goodness = -minimax(state, depth - 1 - reduction, -alpha - 1, -alpha,
 			    indent + 1, move.mLegalWordId).goodness;
-	// Re-search with full window if null window failed high.
+	// Re-search at full depth+window if the null/reduced search
+	// found a score inside (alpha, beta) — it may be better than
+	// we thought but we need an accurate score.
 	if (goodness > alpha && goodness < beta) {
-	  // If LMR was applied, re-search at full depth too.
-	  goodness = -minimax(state, depth - 1, -beta, -alpha,
-			      indent + 1, move.mLegalWordId).goodness;
-	} else if (reduction > 0 && goodness > alpha) {
-	  // LMR reduced search beat alpha but also beat beta — still
-	  // re-search at full depth to get accurate score.
 	  goodness = -minimax(state, depth - 1, -beta, -alpha,
 			      indent + 1, move.mLegalWordId).goodness;
 	}
@@ -854,8 +847,9 @@ struct Minimax : public Algorithm<S, M> {
 	if (dup) continue;
 
 	// Futility pruning: skip late moves at shallow depth when
-	// static eval + margin is below alpha.
-	if (canFutilityPrune && moves_searched >= 1) {
+	// static eval + margin is below alpha. Always search at least
+	// 2 non-staged moves before pruning.
+	if (canFutilityPrune && moves_searched >= 2) {
 	  continue;
 	}
 

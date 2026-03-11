@@ -407,6 +407,11 @@ struct Minimax : public Algorithm<S, M> {
   static constexpr int HISTORY_TABLE_SIZE = 65536;
   int mHistory[HISTORY_TABLE_SIZE];
 
+  // Countermove heuristic: when opponent plays move X, move Y is a good response.
+  // Indexed by the previous move's LegalWordId.
+  int mCountermove[HISTORY_TABLE_SIZE];  // stores LegalWordId of best response
+  bool mCountermoveValid[HISTORY_TABLE_SIZE];
+
   struct RootMoveScore {
     M move;
     int score;
@@ -424,6 +429,7 @@ struct Minimax : public Algorithm<S, M> {
 	  mMaxDepth(MAX_DEPTH), mUseTranspositionTable(true), mTraceStream(&std::cout), mLastSearchStats() {
     memset(mKillerValid, 0, sizeof(mKillerValid));
     memset(mHistory, 0, sizeof(mHistory));
+    memset(mCountermoveValid, 0, sizeof(mCountermoveValid));
   }
 
   void reset() override {
@@ -527,7 +533,7 @@ struct Minimax : public Algorithm<S, M> {
   // Find Minimax value of the given tree,
   // Minimax value lies within a range of [alpha; beta] window.
   // Whenever alpha >= beta, further checks of children in a node can be pruned.
-  MinimaxResult<M> minimax(S *state, int depth, int alpha, int beta, int indent) {
+  MinimaxResult<M> minimax(S *state, int depth, int alpha, int beta, int indent, int prevMoveId = -1) {
     ++nodes;
     const int alpha_original = alpha;
 
@@ -605,7 +611,20 @@ struct Minimax : public Algorithm<S, M> {
           }
         }
 
-        // 3. Sort remaining moves by history score, but only at nodes with
+        // 3. Countermove: the best response to the opponent's previous move.
+        if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE
+            && mCountermoveValid[prevMoveId]) {
+          int cmId = mCountermove[prevMoveId];
+          for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+            if (legal_moves[i].mLegalWordId == cmId) {
+              std::swap(legal_moves[front], legal_moves[i]);
+              front++;
+              break;
+            }
+          }
+        }
+
+        // 4. Sort remaining moves by history score, but only at nodes with
         //    enough remaining depth to amortize the sort cost.
         if (depth >= 3 && front < static_cast<int>(legal_moves.size())) {
           const int* hist = mHistory;
@@ -638,7 +657,8 @@ struct Minimax : public Algorithm<S, M> {
 				      depth - 1,
 				      -beta,
 				      -alpha,
-				      indent + 1).goodness;
+				      indent + 1,
+				      move.mLegalWordId).goodness;
 	VLOG(9) << *state << std::endl;
 
 	if (indent == 0) {
@@ -668,10 +688,17 @@ struct Minimax : public Algorithm<S, M> {
 	        mKillerValid[indent][0] = true;
 	      }
 	    }
-	    // Update history: reward the cutoff move.
+	    // Update countermove table.
+	    if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE) {
+	      mCountermove[prevMoveId] = move.mLegalWordId;
+	      mCountermoveValid[prevMoveId] = true;
+	    }
+	    // Update history with gravity formula (prevents saturation).
 	    int id = move.mLegalWordId;
 	    if (id >= 0 && id < HISTORY_TABLE_SIZE) {
-	      mHistory[id] += depth * depth;
+	      int bonus = depth * depth;
+	      int& entry = mHistory[id];
+	      entry += bonus - entry * bonus / 16384;
 	    }
 	    break;
 	  }

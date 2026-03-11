@@ -631,6 +631,14 @@ struct Minimax : public Algorithm<S, M> {
       }
     }
 
+    // Internal Iterative Deepening: if no TT move exists at a node
+    // with enough remaining depth, do a shallow search to find a good
+    // move to try first (which also populates the TT for PVS).
+    if (indent > 0 && depth >= 4 && !entry_found) {
+      minimax(state, depth - 2, alpha, beta, indent, prevMoveId);
+      entry_found = get_tt_entry(state, entry);
+    }
+
     // Static eval for pruning decisions (computed once, shared).
     static constexpr int FUTILITY_MARGIN_D1 = 200;
     static constexpr int FUTILITY_MARGIN_D2 = 500;

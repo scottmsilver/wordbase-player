@@ -342,23 +342,20 @@ int main(int argc, char** argv) {
 
     auto algorithm = makeAlgorithm();
 
-    // Parallel search algorithms (created once, reused across turns).
+    // Parallel search algorithm (created once, reused across turns).
     using MmStats = Minimax<WordBaseState, WordBaseMove>::SearchStats;
-    std::unique_ptr<RootParallelSearch<WordBaseState, WordBaseMove>> rootParallel;
-    std::unique_ptr<LazySMPSearch<WordBaseState, WordBaseMove>> lazySMP;
-    std::unique_ptr<YBWCSearch<WordBaseState, WordBaseMove>> ybwc;
-    const bool useParallel = options.threads > 1 && !options.parallelMode.empty();
-    if (useParallel) {
+    std::unique_ptr<ParallelSearchBase<WordBaseState, WordBaseMove>> parallelAlgo;
+    if (options.threads > 1 && !options.parallelMode.empty()) {
       if (options.parallelMode == "root") {
-        rootParallel = std::make_unique<RootParallelSearch<WordBaseState, WordBaseMove>>(
+        parallelAlgo = std::make_unique<RootParallelSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
           options.maxDepth, options.useTranspositionTable);
       } else if (options.parallelMode == "lazysmp") {
-        lazySMP = std::make_unique<LazySMPSearch<WordBaseState, WordBaseMove>>(
+        parallelAlgo = std::make_unique<LazySMPSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
           options.maxDepth, options.useTranspositionTable);
       } else if (options.parallelMode == "ybwc") {
-        ybwc = std::make_unique<YBWCSearch<WordBaseState, WordBaseMove>>(
+        parallelAlgo = std::make_unique<YBWCSearch<WordBaseState, WordBaseMove>>(
           options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
           options.maxDepth, options.useTranspositionTable);
       }
@@ -368,15 +365,9 @@ int main(int argc, char** argv) {
 
     // Unified search dispatch: returns (move, stats).
     auto doSearch = [&](WordBaseState& searchState) -> std::pair<WordBaseMove, MmStats> {
-      if (rootParallel) {
-        auto m = rootParallel->get_move(&searchState);
-        return {m, rootParallel->getLastSearchStats()};
-      } else if (lazySMP) {
-        auto m = lazySMP->get_move(&searchState);
-        return {m, lazySMP->getLastSearchStats()};
-      } else if (ybwc) {
-        auto m = ybwc->get_move(&searchState);
-        return {m, ybwc->getLastSearchStats()};
+      if (parallelAlgo) {
+        auto m = parallelAlgo->get_move(&searchState);
+        return {m, parallelAlgo->getLastSearchStats()};
       } else {
         auto m = algorithm.get_move(&searchState);
         return {m, algorithm.getLastSearchStats()};

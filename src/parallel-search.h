@@ -8,22 +8,9 @@
 #include <thread>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// Strategy 1: Root-Level Parallelism
-//
-// Split root moves across N threads. Each thread gets its own Minimax
-// instance with independent TT, killers, and history tables. After time
-// expires, the best result across all threads is returned.
-//
-// Trade-offs:
-//   + Simple, no shared state, no synchronization overhead
-//   + Each thread explores deep into its assigned moves
-//   - No information sharing between threads (separate TTs)
-//   - Weaker alpha bounds (each thread only knows its own best)
-//   - Load imbalance if some moves are much harder than others
-// ---------------------------------------------------------------------------
+// Common base for all parallel strategies. Holds shared config and helpers.
 template<class S, class M>
-struct RootParallelSearch : public Algorithm<S, M> {
+struct ParallelSearchBase : public Algorithm<S, M> {
   int mNumThreads;
   double mMaxSeconds;
   int mMaxMoves;
@@ -32,7 +19,7 @@ struct RootParallelSearch : public Algorithm<S, M> {
   std::function<int(S*)> mGetGoodness;
   typename Minimax<S, M>::SearchStats mLastSearchStats;
 
-  RootParallelSearch(int numThreads, double maxSeconds, int maxMoves = INF,
+  ParallelSearchBase(int numThreads, double maxSeconds, int maxMoves = INF,
                      int maxDepth = MAX_DEPTH, bool useTT = true,
                      std::function<int(S*)> getGoodness = nullptr)
     : mNumThreads(numThreads), mMaxSeconds(maxSeconds), mMaxMoves(maxMoves),
@@ -42,63 +29,72 @@ struct RootParallelSearch : public Algorithm<S, M> {
     return mLastSearchStats;
   }
 
-  M get_move(S* state) override {
-    std::vector<M> allMoves;
-    state->fill_legal_moves(allMoves, mMaxMoves);
-    if (allMoves.empty()) return M();
+protected:
+  struct ThreadResult {
+    M bestMove{};
+    typename Minimax<S, M>::SearchStats stats{};
+  };
 
-    // Round-robin distribute moves across threads.
-    // Move[0] (best heuristic) goes to thread 0, move[1] to thread 1, etc.
-    std::vector<std::vector<M>> threadMoves(mNumThreads);
-    for (size_t i = 0; i < allMoves.size(); i++) {
-      threadMoves[i % mNumThreads].push_back(allMoves[i]);
-    }
+  // Configure a Minimax engine with this strategy's settings.
+  void configureEngine(Minimax<S, M>& engine, TTEntry<M>* sharedTT = nullptr,
+                       const std::vector<M>* rootMoves = nullptr) {
+    engine.setMaxDepth(mMaxDepth);
+    engine.setUseTranspositionTable(mUseTranspositionTable);
+    engine.setTraceStream(nullptr);
+    if (sharedTT) engine.setSharedTT(sharedTT);
+    if (rootMoves) engine.setRootMoves(*rootMoves);
+  }
 
-    struct ThreadResult {
-      M bestMove;
-      int bestScore = -INF;
-      typename Minimax<S, M>::SearchStats stats;
-    };
-    std::vector<ThreadResult> results(mNumThreads);
+  // Run a search on a thread: clone state, create engine, search, store result.
+  void runThread(S* state, ThreadResult& result,
+                 TTEntry<M>* sharedTT = nullptr,
+                 const std::vector<M>* rootMoves = nullptr) {
+    S threadState = state->clone();
+    Minimax<S, M> engine(mMaxSeconds, mMaxMoves, mGetGoodness);
+    configureEngine(engine, sharedTT, rootMoves);
+    result.bestMove = engine.get_move(&threadState);
+    result.stats = engine.getLastSearchStats();
+  }
 
-    std::vector<std::thread> threads;
-    for (int t = 0; t < mNumThreads; t++) {
-      if (threadMoves[t].empty()) continue;
-      threads.emplace_back([&, t]() {
-        S threadState = state->clone();
-        Minimax<S, M> engine(mMaxSeconds, mMaxMoves, mGetGoodness);
-        engine.setMaxDepth(mMaxDepth);
-        engine.setUseTranspositionTable(mUseTranspositionTable);
-        engine.setTraceStream(nullptr);
-        engine.setRootMoves(threadMoves[t]);
-
-        results[t].bestMove = engine.get_move(&threadState);
-        results[t].bestScore = engine.getLastSearchStats().goodness;
-        results[t].stats = engine.getLastSearchStats();
-      });
-    }
-    for (auto& t : threads) t.join();
-
-    // Pick best result: prefer deeper search, break ties by score.
+  // Pick the best result: prefer deeper search, break ties by score.
+  static int pickBest(const std::vector<ThreadResult>& results, int count) {
     int bestIdx = 0;
-    for (int t = 1; t < mNumThreads; t++) {
-      if (threadMoves[t].empty()) continue;
+    for (int t = 1; t < count; t++) {
       if (results[t].stats.max_depth > results[bestIdx].stats.max_depth ||
           (results[t].stats.max_depth == results[bestIdx].stats.max_depth &&
-           results[t].bestScore > results[bestIdx].bestScore)) {
+           results[t].stats.goodness > results[bestIdx].stats.goodness)) {
         bestIdx = t;
       }
     }
+    return bestIdx;
+  }
 
-    // Aggregate stats across all threads.
+  // Aggregate stats from multiple results into mLastSearchStats.
+  void aggregateStats(const ThreadResult& primary,
+                      const std::vector<ThreadResult>& others, int count) {
+    mLastSearchStats = primary.stats;
+    double maxElapsed = primary.stats.elapsed_seconds;
+    for (int t = 0; t < count; t++) {
+      mLastSearchStats.nodes += others[t].stats.nodes;
+      mLastSearchStats.leafs += others[t].stats.leafs;
+      mLastSearchStats.beta_cuts += others[t].stats.beta_cuts;
+      mLastSearchStats.tt_hits += others[t].stats.tt_hits;
+      maxElapsed = std::max(maxElapsed, others[t].stats.elapsed_seconds);
+    }
+    mLastSearchStats.elapsed_seconds = maxElapsed;
+    mLastSearchStats.nodes_per_second = maxElapsed > 0
+      ? mLastSearchStats.nodes / maxElapsed : 0;
+  }
+
+  // Simpler overload: all results in one vector, best already chosen.
+  void aggregateStats(const std::vector<ThreadResult>& results, int count, int bestIdx) {
     mLastSearchStats = results[bestIdx].stats;
     mLastSearchStats.nodes = 0;
     mLastSearchStats.leafs = 0;
     mLastSearchStats.beta_cuts = 0;
     mLastSearchStats.tt_hits = 0;
     double maxElapsed = 0;
-    for (int t = 0; t < mNumThreads; t++) {
-      if (threadMoves[t].empty()) continue;
+    for (int t = 0; t < count; t++) {
       mLastSearchStats.nodes += results[t].stats.nodes;
       mLastSearchStats.leafs += results[t].stats.leafs;
       mLastSearchStats.beta_cuts += results[t].stats.beta_cuts;
@@ -108,7 +104,55 @@ struct RootParallelSearch : public Algorithm<S, M> {
     mLastSearchStats.elapsed_seconds = maxElapsed;
     mLastSearchStats.nodes_per_second = maxElapsed > 0
       ? mLastSearchStats.nodes / maxElapsed : 0;
+  }
 
+  // Distribute moves round-robin across N buckets.
+  static std::vector<std::vector<M>> distributeMoves(
+      const std::vector<M>& moves, int numBuckets) {
+    std::vector<std::vector<M>> buckets(numBuckets);
+    for (size_t i = 0; i < moves.size(); i++) {
+      buckets[i % numBuckets].push_back(moves[i]);
+    }
+    return buckets;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Strategy 1: Root-Level Parallelism
+//
+// Split root moves across N threads. Each thread gets its own Minimax
+// instance with independent TT, killers, and history tables.
+//
+//   + Simple, no shared state, no synchronization overhead
+//   - No information sharing between threads (separate TTs)
+//   - Weaker alpha bounds (each thread only knows its own best)
+// ---------------------------------------------------------------------------
+template<class S, class M>
+struct RootParallelSearch : public ParallelSearchBase<S, M> {
+  using Base = ParallelSearchBase<S, M>;
+  using typename Base::ThreadResult;
+
+  using Base::Base;  // inherit constructor
+
+  M get_move(S* state) override {
+    std::vector<M> allMoves;
+    state->fill_legal_moves(allMoves, this->mMaxMoves);
+    if (allMoves.empty()) return M();
+
+    auto threadMoves = Base::distributeMoves(allMoves, this->mNumThreads);
+    std::vector<ThreadResult> results(this->mNumThreads);
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < this->mNumThreads; t++) {
+      if (threadMoves[t].empty()) continue;
+      threads.emplace_back([&, t]() {
+        this->runThread(state, results[t], nullptr, &threadMoves[t]);
+      });
+    }
+    for (auto& t : threads) t.join();
+
+    int bestIdx = Base::pickBest(results, this->mNumThreads);
+    Base::aggregateStats(results, this->mNumThreads, bestIdx);
     return results[bestIdx].bestMove;
   }
 
@@ -119,198 +163,97 @@ struct RootParallelSearch : public Algorithm<S, M> {
 // Strategy 2: Lazy SMP (Symmetric Multi-Processing)
 //
 // All N threads run full iterative deepening from the root, sharing a single
-// transposition table. Threads naturally diverge because different TT states
-// lead to different move orderings and cutoffs. This is the standard approach
-// used by Stockfish and other top chess engines.
+// transposition table. Standard approach used by Stockfish.
 //
-// Trade-offs:
-//   + Shared TT provides automatic information sharing between threads
-//   + All threads explore the full move space (no artificial partitioning)
-//   + Simple implementation with proven effectiveness
-//   - Benign data races on TT reads/writes (caught by verification key)
+//   + Shared TT provides automatic information sharing
+//   + All threads explore the full move space
+//   - Benign data races on TT (caught by verification key)
 //   - Some redundant work across threads
-//   - Diminishing returns past 4-8 threads
 // ---------------------------------------------------------------------------
 template<class S, class M>
-struct LazySMPSearch : public Algorithm<S, M> {
-  int mNumThreads;
-  double mMaxSeconds;
-  int mMaxMoves;
-  int mMaxDepth;
-  bool mUseTranspositionTable;
-  std::function<int(S*)> mGetGoodness;
-  typename Minimax<S, M>::SearchStats mLastSearchStats;
+struct LazySMPSearch : public ParallelSearchBase<S, M> {
+  using Base = ParallelSearchBase<S, M>;
+  using typename Base::ThreadResult;
 
-  LazySMPSearch(int numThreads, double maxSeconds, int maxMoves = INF,
-                int maxDepth = MAX_DEPTH, bool useTT = true,
-                std::function<int(S*)> getGoodness = nullptr)
-    : mNumThreads(numThreads), mMaxSeconds(maxSeconds), mMaxMoves(maxMoves),
-      mMaxDepth(maxDepth), mUseTranspositionTable(useTT), mGetGoodness(getGoodness) {}
-
-  const typename Minimax<S, M>::SearchStats& getLastSearchStats() const {
-    return mLastSearchStats;
-  }
+  using Base::Base;
 
   M get_move(S* state) override {
-    // Shared TT — all threads read/write the same table.
-    // Data races are benign: the verification key detects torn reads.
-    constexpr size_t TT_SIZE = Minimax<S, M>::TT_SIZE;
-    std::vector<TTEntry<M>> sharedTT(TT_SIZE);
+    if (mSharedTT.empty()) mSharedTT.resize(Minimax<S, M>::TT_SIZE);
+    else std::fill(mSharedTT.begin(), mSharedTT.end(), TTEntry<M>{});
 
-    struct ThreadResult {
-      M bestMove;
-      typename Minimax<S, M>::SearchStats stats;
-    };
-    std::vector<ThreadResult> results(mNumThreads);
-
+    std::vector<ThreadResult> results(this->mNumThreads);
     std::vector<std::thread> threads;
-    for (int t = 0; t < mNumThreads; t++) {
+    for (int t = 0; t < this->mNumThreads; t++) {
       threads.emplace_back([&, t]() {
-        S threadState = state->clone();
-        Minimax<S, M> engine(mMaxSeconds, mMaxMoves, mGetGoodness);
-        engine.setMaxDepth(mMaxDepth);
-        engine.setUseTranspositionTable(mUseTranspositionTable);
-        engine.setTraceStream(nullptr);
-        engine.setSharedTT(sharedTT.data());
-
-        results[t].bestMove = engine.get_move(&threadState);
-        results[t].stats = engine.getLastSearchStats();
+        this->runThread(state, results[t], mSharedTT.data());
       });
     }
     for (auto& t : threads) t.join();
 
-    // Use result from thread with deepest completed search.
-    int bestIdx = 0;
-    for (int t = 1; t < mNumThreads; t++) {
-      if (results[t].stats.max_depth > results[bestIdx].stats.max_depth) {
-        bestIdx = t;
-      }
-    }
-
-    // Aggregate stats.
-    mLastSearchStats = results[bestIdx].stats;
-    mLastSearchStats.nodes = 0;
-    mLastSearchStats.leafs = 0;
-    mLastSearchStats.beta_cuts = 0;
-    mLastSearchStats.tt_hits = 0;
-    double maxElapsed = 0;
-    for (int t = 0; t < mNumThreads; t++) {
-      mLastSearchStats.nodes += results[t].stats.nodes;
-      mLastSearchStats.leafs += results[t].stats.leafs;
-      mLastSearchStats.beta_cuts += results[t].stats.beta_cuts;
-      mLastSearchStats.tt_hits += results[t].stats.tt_hits;
-      maxElapsed = std::max(maxElapsed, results[t].stats.elapsed_seconds);
-    }
-    mLastSearchStats.elapsed_seconds = maxElapsed;
-    mLastSearchStats.nodes_per_second = maxElapsed > 0
-      ? mLastSearchStats.nodes / maxElapsed : 0;
-
+    int bestIdx = Base::pickBest(results, this->mNumThreads);
+    Base::aggregateStats(results, this->mNumThreads, bestIdx);
     return results[bestIdx].bestMove;
   }
 
   std::string get_name() const override { return "LazySMP"; }
+
+private:
+  std::vector<TTEntry<M>> mSharedTT;
 };
 
 // ---------------------------------------------------------------------------
 // Strategy 3: YBWC (Young Brothers Wait Concept) — Root-Level
 //
-// Main thread (thread 0) searches ALL root moves via full iterative deepening.
-// Worker threads (1..N-1) search only non-PV root moves, sharing the TT with
-// the main thread. Workers pre-populate TT entries that the main thread hits
-// when it reaches those moves, speeding up its search.
+// Main thread searches ALL root moves. Worker threads search only non-PV
+// moves, sharing the TT. Workers pre-populate TT entries for the main thread.
 //
-// Trade-offs:
-//   + PV move gets full attention from main thread (best move ordering)
-//   + Workers speculatively pre-compute non-PV subtrees via shared TT
-//   + Good alpha bound from PV guides worker cutoffs
-//   - Workers may do redundant work if main thread prunes differently
-//   - Main thread has more work (all moves) than any single worker
-//   - Slightly more complex than Lazy SMP with similar effectiveness
+//   + PV move gets full attention; workers pre-compute non-PV subtrees
+//   - Workers may do redundant work
+//   - Main thread has more work than any single worker
 // ---------------------------------------------------------------------------
 template<class S, class M>
-struct YBWCSearch : public Algorithm<S, M> {
-  int mNumThreads;
-  double mMaxSeconds;
-  int mMaxMoves;
-  int mMaxDepth;
-  bool mUseTranspositionTable;
-  std::function<int(S*)> mGetGoodness;
-  typename Minimax<S, M>::SearchStats mLastSearchStats;
+struct YBWCSearch : public ParallelSearchBase<S, M> {
+  using Base = ParallelSearchBase<S, M>;
+  using typename Base::ThreadResult;
 
-  YBWCSearch(int numThreads, double maxSeconds, int maxMoves = INF,
-             int maxDepth = MAX_DEPTH, bool useTT = true,
-             std::function<int(S*)> getGoodness = nullptr)
-    : mNumThreads(numThreads), mMaxSeconds(maxSeconds), mMaxMoves(maxMoves),
-      mMaxDepth(maxDepth), mUseTranspositionTable(useTT), mGetGoodness(getGoodness) {}
-
-  const typename Minimax<S, M>::SearchStats& getLastSearchStats() const {
-    return mLastSearchStats;
-  }
+  using Base::Base;
 
   M get_move(S* state) override {
     std::vector<M> allMoves;
-    state->fill_legal_moves(allMoves, mMaxMoves);
+    state->fill_legal_moves(allMoves, this->mMaxMoves);
     if (allMoves.empty()) return M();
 
-    // Shared TT between main thread and all workers.
-    constexpr size_t TT_SIZE = Minimax<S, M>::TT_SIZE;
-    std::vector<TTEntry<M>> sharedTT(TT_SIZE);
+    if (mSharedTT.empty()) mSharedTT.resize(Minimax<S, M>::TT_SIZE);
+    else std::fill(mSharedTT.begin(), mSharedTT.end(), TTEntry<M>{});
 
     // Non-PV moves for workers (skip move[0], the expected best).
     std::vector<M> nonPvMoves(allMoves.begin() + 1, allMoves.end());
-    int numWorkers = std::min(mNumThreads - 1, std::max(1, (int)nonPvMoves.size()));
+    int numWorkers = std::min(this->mNumThreads - 1, std::max(1, (int)nonPvMoves.size()));
+    auto workerMoves = Base::distributeMoves(nonPvMoves, numWorkers);
 
-    // Distribute non-PV moves among workers.
-    std::vector<std::vector<M>> workerMoves(numWorkers);
-    for (size_t i = 0; i < nonPvMoves.size(); i++) {
-      workerMoves[i % numWorkers].push_back(nonPvMoves[i]);
-    }
-
-    struct ThreadResult {
-      M bestMove;
-      typename Minimax<S, M>::SearchStats stats;
-    };
     ThreadResult mainResult;
     std::vector<ThreadResult> workerResults(numWorkers);
 
     std::vector<std::thread> threads;
 
-    // Main thread: searches ALL moves with shared TT.
+    // Main thread: all moves, shared TT.
     threads.emplace_back([&]() {
-      S threadState = state->clone();
-      Minimax<S, M> engine(mMaxSeconds, mMaxMoves, mGetGoodness);
-      engine.setMaxDepth(mMaxDepth);
-      engine.setUseTranspositionTable(mUseTranspositionTable);
-      engine.setTraceStream(nullptr);
-      engine.setSharedTT(sharedTT.data());
-
-      mainResult.bestMove = engine.get_move(&threadState);
-      mainResult.stats = engine.getLastSearchStats();
+      this->runThread(state, mainResult, mSharedTT.data());
     });
 
-    // Worker threads: search only non-PV moves (pre-populate TT).
+    // Workers: non-PV subsets, shared TT.
     for (int t = 0; t < numWorkers; t++) {
       if (workerMoves[t].empty()) continue;
       threads.emplace_back([&, t]() {
-        S threadState = state->clone();
-        Minimax<S, M> engine(mMaxSeconds, mMaxMoves, mGetGoodness);
-        engine.setMaxDepth(mMaxDepth);
-        engine.setUseTranspositionTable(mUseTranspositionTable);
-        engine.setTraceStream(nullptr);
-        engine.setSharedTT(sharedTT.data());
-        engine.setRootMoves(workerMoves[t]);
-
-        workerResults[t].bestMove = engine.get_move(&threadState);
-        workerResults[t].stats = engine.getLastSearchStats();
+        this->runThread(state, workerResults[t], mSharedTT.data(), &workerMoves[t]);
       });
     }
     for (auto& t : threads) t.join();
 
-    // Main thread result is primary. Check if any worker found deeper.
-    M bestMove = mainResult.bestMove;
+    // Check if any worker beat the main thread.
     int bestDepth = mainResult.stats.max_depth;
     int bestScore = mainResult.stats.goodness;
-
+    M bestMove = mainResult.bestMove;
     for (int t = 0; t < numWorkers; t++) {
       if (workerMoves[t].empty()) continue;
       if (workerResults[t].stats.max_depth > bestDepth ||
@@ -322,30 +265,15 @@ struct YBWCSearch : public Algorithm<S, M> {
       }
     }
 
-    // Aggregate stats.
-    mLastSearchStats = mainResult.stats;
-    mLastSearchStats.best_move = bestMove;
-    mLastSearchStats.goodness = bestScore;
-    mLastSearchStats.max_depth = bestDepth;
-    mLastSearchStats.nodes = mainResult.stats.nodes;
-    mLastSearchStats.leafs = mainResult.stats.leafs;
-    mLastSearchStats.beta_cuts = mainResult.stats.beta_cuts;
-    mLastSearchStats.tt_hits = mainResult.stats.tt_hits;
-    double maxElapsed = mainResult.stats.elapsed_seconds;
-    for (int t = 0; t < numWorkers; t++) {
-      if (workerMoves[t].empty()) continue;
-      mLastSearchStats.nodes += workerResults[t].stats.nodes;
-      mLastSearchStats.leafs += workerResults[t].stats.leafs;
-      mLastSearchStats.beta_cuts += workerResults[t].stats.beta_cuts;
-      mLastSearchStats.tt_hits += workerResults[t].stats.tt_hits;
-      maxElapsed = std::max(maxElapsed, workerResults[t].stats.elapsed_seconds);
-    }
-    mLastSearchStats.elapsed_seconds = maxElapsed;
-    mLastSearchStats.nodes_per_second = maxElapsed > 0
-      ? mLastSearchStats.nodes / maxElapsed : 0;
-
+    Base::aggregateStats(mainResult, workerResults, numWorkers);
+    this->mLastSearchStats.best_move = bestMove;
+    this->mLastSearchStats.goodness = bestScore;
+    this->mLastSearchStats.max_depth = bestDepth;
     return bestMove;
   }
 
   std::string get_name() const override { return "YBWC"; }
+
+private:
+  std::vector<TTEntry<M>> mSharedTT;
 };

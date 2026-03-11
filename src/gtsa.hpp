@@ -875,9 +875,10 @@ struct Minimax : public Algorithm<S, M> {
 	// full depth (handled inside searchMove).
 	int reduction = 0;
 	if (indent > 0 && depth >= 3 && moves_searched >= 3) {
-	  // Base reduction: 1 ply. Increase for very late moves.
+	  // Base reduction: 1 ply. Increase for later moves.
 	  reduction = 1;
 	  if (moves_searched >= 8) reduction = 2;
+	  if (moves_searched >= 20 && depth >= 5) reduction = 3;
 	  // Don't reduce below depth 1.
 	  if (reduction >= depth - 1) reduction = depth - 2;
 	  if (reduction < 0) reduction = 0;

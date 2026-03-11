@@ -631,6 +631,21 @@ struct Minimax : public Algorithm<S, M> {
       }
     }
 
+    // Futility pruning: at shallow depths, if the static eval is far
+    // below alpha, late moves are unlikely to raise it enough. We skip
+    // them (but always search the first few moves and staged moves).
+    static constexpr int FUTILITY_MARGIN_D1 = 200;
+    static constexpr int FUTILITY_MARGIN_D2 = 500;
+    bool canFutilityPrune = false;
+    int staticEval = 0;
+    if (indent > 0 && depth <= 2 && alpha > -INF + 1000 && beta < INF - 1000) {
+      staticEval = get_goodness ? get_goodness(state) : state->get_goodness();
+      int margin = (depth == 1) ? FUTILITY_MARGIN_D1 : FUTILITY_MARGIN_D2;
+      if (staticEval + margin <= alpha) {
+        canFutilityPrune = true;
+      }
+    }
+
     int max_goodness = -INF;
     bool completed = true;
     bool found_best_move = false;
@@ -837,6 +852,12 @@ struct Minimax : public Algorithm<S, M> {
 	  if (staged_ids[j] == move.mLegalWordId) { dup = true; break; }
 	}
 	if (dup) continue;
+
+	// Futility pruning: skip late moves at shallow depth when
+	// static eval + margin is below alpha.
+	if (canFutilityPrune && moves_searched >= 1) {
+	  continue;
+	}
 
 	// Late Move Reduction: moves searched after the first few at
 	// non-root nodes with sufficient depth are searched at reduced

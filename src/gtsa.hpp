@@ -200,6 +200,19 @@ struct State {
 
   virtual void make_move(const M &move) = 0;
 
+  // Lightweight snapshot/restore for search undo. Override in game-specific
+  // subclasses to avoid copying large fields (e.g., played-word bitsets).
+  // Default: full state copy (same as StateUndoer).
+  int mSearchDepthRemaining = 99;
+  struct DefaultSnapshot { S savedState; };
+  DefaultSnapshot takeSnapshot(const M&) const {
+    return {*static_cast<const S*>(this)};
+  }
+  void restoreSnapshot(const DefaultSnapshot& snap) {
+    *static_cast<S*>(this) = snap.savedState;
+  }
+  void undoPlayedWords(const M&) {} // no-op for default
+
   // Check whether a move is valid for the current player.
   // Used to validate transposition table entries against hash collisions.
   // Default returns true; override in game-specific subclasses.
@@ -573,152 +586,206 @@ struct Minimax : public Algorithm<S, M> {
 
     int max_goodness = -INF;
     bool completed = true;
-    // Reuse per-depth move buffers to avoid heap allocation in the search loop.
-    static std::vector<M> depth_move_buffers[64];
-    std::vector<M>& legal_moves = (indent == 0 && mHasCachedRootMoves)
-      ? mCachedRootMoves
-      : depth_move_buffers[indent];
-    if (!(indent == 0 && mHasCachedRootMoves)) {
-      state->fill_legal_moves(legal_moves, MAX_MOVES);
-
-      // Promote TT move, killer moves, and high-history moves to the front.
-      // This is the key move ordering improvement: TT > killers > countermove > history > heuristic.
-      if (indent > 0 && !legal_moves.empty()) {
-        int front = 0;
-
-        // 1. TT move first (from shallow entries that didn't cause a cutoff above).
-        if (mUseTranspositionTable && entry_found && state->isValidMove(entry.move)) {
-          for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
-            if (legal_moves[i].mLegalWordId == entry.move.mLegalWordId) {
-              std::swap(legal_moves[front], legal_moves[i]);
-              front++;
-              break;
-            }
-          }
-        }
-
-        // 2. Killer moves next.
-        for (int k = 0; k < NUM_KILLERS && indent < MAX_PLY; k++) {
-          if (mKillerValid[indent][k]) {
-            int killerId = mKillers[indent][k].mLegalWordId;
-            for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
-              if (legal_moves[i].mLegalWordId == killerId) {
-                std::swap(legal_moves[front], legal_moves[i]);
-                front++;
-                break;
-              }
-            }
-          }
-        }
-
-        // 3. Countermove: the best response to the opponent's previous move.
-        if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE
-            && mCountermoveValid[prevMoveId]) {
-          int cmId = mCountermove[prevMoveId];
-          for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
-            if (legal_moves[i].mLegalWordId == cmId) {
-              std::swap(legal_moves[front], legal_moves[i]);
-              front++;
-              break;
-            }
-          }
-        }
-
-        // 4. Sort remaining moves by history score, but only at nodes with
-        //    enough remaining depth to amortize the sort cost.
-        if (depth >= 3 && front < static_cast<int>(legal_moves.size())) {
-          const int* hist = mHistory;
-          std::stable_sort(legal_moves.begin() + front, legal_moves.end(),
-            [hist](const M& a, const M& b) {
-              int ha = (a.mLegalWordId >= 0 && a.mLegalWordId < HISTORY_TABLE_SIZE)
-                       ? hist[a.mLegalWordId] : 0;
-              int hb = (b.mLegalWordId >= 0 && b.mLegalWordId < HISTORY_TABLE_SIZE)
-                       ? hist[b.mLegalWordId] : 0;
-              return ha > hb;
-            });
-        }
-      }
-    }
-
-    assert(legal_moves.size() > 0);
     bool found_best_move = false;
 
-    for (int i = 0; i < legal_moves.size(); i++) {
-      const M& move = legal_moves[i];
+    // Track move IDs searched in early stages (to skip duplicates later).
+    int staged_ids[5];
+    int num_staged = 0;
+    int moves_searched = 0;
+    bool search_stopped = false;
 
-      // Scope around StateUndoer is important here, so that it gets undone.
-      // FIX-ME to some cool macro thing that makes that clearer.
-      {
-	StateUndoer<S, M> undoer(*state, move);
+    // Common logic for searching one move. Uses lightweight snapshot
+    // (excludes mPlayedWords ~1KB) instead of full state copy.
+    auto searchMove = [&](const M& move) {
+      auto snap = state->takeSnapshot(move);
+      state->mSearchDepthRemaining = depth;
+      state->make_move(move);
+      const int goodness = -minimax(
+				    state,
+				    depth - 1,
+				    -beta,
+				    -alpha,
+				    indent + 1,
+				    move.mLegalWordId).goodness;
+      ++moves_searched;
+      VLOG(9) << *state << std::endl;
 
-	state->make_move(move);
-	const int goodness = -minimax(
-				      state,
-				      depth - 1,
-				      -beta,
-				      -alpha,
-				      indent + 1,
-				      move.mLegalWordId).goodness;
-	VLOG(9) << *state << std::endl;
+      if (indent == 0) {
+	mCurrentRootScores.push_back({move, goodness});
+      }
 
-	if (indent == 0) {
-	  mCurrentRootScores.push_back({legal_moves[i], goodness});
+      if ((nodes & 4095) == 0 && timer.exceeded(MAX_SECONDS)) {
+	completed = false;
+	search_stopped = true;
+      } else if (goodness > max_goodness) {
+	max_goodness = goodness;
+	best_move = move;
+	found_best_move = true;
+	VLOG(9) << "choosing --> h(" << goodness << ")" << best_move << std::endl;
+	if (max_goodness >= beta) {
+	  ++beta_cuts;
+	  cut_bf_sum += moves_searched;
+	  if (indent < MAX_PLY) {
+	    if (!mKillerValid[indent][0] ||
+		mKillers[indent][0].mLegalWordId != move.mLegalWordId) {
+	      mKillers[indent][1] = mKillers[indent][0];
+	      mKillerValid[indent][1] = mKillerValid[indent][0];
+	      mKillers[indent][0] = move;
+	      mKillerValid[indent][0] = true;
+	    }
+	  }
+	  if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE) {
+	    mCountermove[prevMoveId] = move.mLegalWordId;
+	    mCountermoveValid[prevMoveId] = true;
+	  }
+	  int id = move.mLegalWordId;
+	  if (id >= 0 && id < HISTORY_TABLE_SIZE) {
+	    int bonus = depth * depth;
+	    int& e = mHistory[id];
+	    e += bonus - e * bonus / 16384;
+	  }
+	  search_stopped = true;
 	}
+      }
 
-	if ((nodes & 4095) == 0 && timer.exceeded(MAX_SECONDS)) {
-	  completed = false;
-	  break;
-	}
+      // Restore state: snapshot clears changed played-word bits, then restores
+      // grid, hash, bitboards, player, etc.
+      state->restoreSnapshot(snap);
+      if (!search_stopped && alpha < max_goodness) alpha = max_goodness;
+    };
 
-	if (goodness > max_goodness) {
-	  max_goodness = goodness;
-	  best_move = move;
-	  found_best_move = true;
-	  VLOG(9) << "choosing --> h(" << goodness << ")" << best_move << std::endl;
-	  if (max_goodness >= beta) {
-	    ++beta_cuts;
-	    cut_bf_sum += i + 1;
-	    // Record killer move (only non-TT moves).
-	    if (indent < MAX_PLY) {
-	      if (!mKillerValid[indent][0] ||
-	          mKillers[indent][0].mLegalWordId != move.mLegalWordId) {
-	        mKillers[indent][1] = mKillers[indent][0];
-	        mKillerValid[indent][1] = mKillerValid[indent][0];
-	        mKillers[indent][0] = move;
-	        mKillerValid[indent][0] = true;
-	      }
-	    }
-	    // Update countermove table.
-	    if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE) {
-	      mCountermove[prevMoveId] = move.mLegalWordId;
-	      mCountermoveValid[prevMoveId] = true;
-	    }
-	    // Update history with gravity formula (prevents saturation).
-	    int id = move.mLegalWordId;
-	    if (id >= 0 && id < HISTORY_TABLE_SIZE) {
-	      int bonus = depth * depth;
-	      int& entry = mHistory[id];
-	      entry += bonus - entry * bonus / 16384;
-	    }
-	    break;
+    // --- Staged move generation (non-root nodes only) ---
+    // Try TT move, killers, and countermove BEFORE generating the full
+    // move list. This avoids the expensive fill_legal_moves call (~37%
+    // of runtime) at nodes where a privileged move causes a cutoff.
+    if (indent > 0) {
+      // Stage 1: TT move.
+      if (entry_found && state->isValidMove(entry.move)) {
+	staged_ids[num_staged++] = entry.move.mLegalWordId;
+	searchMove(entry.move);
+      }
+
+      // Stage 2: Killer moves.
+      for (int k = 0; k < NUM_KILLERS && !search_stopped && indent < MAX_PLY; k++) {
+	if (mKillerValid[indent][k]) {
+	  int kid = mKillers[indent][k].mLegalWordId;
+	  bool dup = false;
+	  for (int j = 0; j < num_staged; j++)
+	    if (staged_ids[j] == kid) { dup = true; break; }
+	  if (!dup && state->isValidMove(mKillers[indent][k])) {
+	    staged_ids[num_staged++] = kid;
+	    searchMove(mKillers[indent][k]);
 	  }
 	}
       }
 
-      if (alpha < max_goodness) {
-	alpha = max_goodness;
+      // Stage 3: Countermove.
+      if (!search_stopped && prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE
+	  && mCountermoveValid[prevMoveId]) {
+	int cmId = mCountermove[prevMoveId];
+	bool dup = false;
+	for (int j = 0; j < num_staged; j++)
+	  if (staged_ids[j] == cmId) { dup = true; break; }
+	if (!dup) {
+	  M cmMove(cmId);
+	  if (state->isValidMove(cmMove)) {
+	    staged_ids[num_staged++] = cmId;
+	    searchMove(cmMove);
+	  }
+	}
+      }
+    }
+
+    // Stage 4: Generate all remaining moves (skipped if a staged move caused cutoff).
+    if (!search_stopped) {
+      static std::vector<M> depth_move_buffers[64];
+      std::vector<M>& legal_moves = (indent == 0 && mHasCachedRootMoves)
+	? mCachedRootMoves
+	: depth_move_buffers[indent];
+      if (!(indent == 0 && mHasCachedRootMoves)) {
+	state->fill_legal_moves(legal_moves, MAX_MOVES);
+      }
+
+      // At root: promote TT/killers/CM to front (no staging at root).
+      if (indent == 0 && !legal_moves.empty()) {
+	int front = 0;
+	if (mUseTranspositionTable && entry_found && state->isValidMove(entry.move)) {
+	  for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+	    if (legal_moves[i].mLegalWordId == entry.move.mLegalWordId) {
+	      std::swap(legal_moves[front], legal_moves[i]);
+	      front++;
+	      break;
+	    }
+	  }
+	}
+	for (int k = 0; k < NUM_KILLERS && indent < MAX_PLY; k++) {
+	  if (mKillerValid[indent][k]) {
+	    int killerId = mKillers[indent][k].mLegalWordId;
+	    for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+	      if (legal_moves[i].mLegalWordId == killerId) {
+		std::swap(legal_moves[front], legal_moves[i]);
+		front++;
+		break;
+	      }
+	    }
+	  }
+	}
+	if (prevMoveId >= 0 && prevMoveId < HISTORY_TABLE_SIZE
+	    && mCountermoveValid[prevMoveId]) {
+	  int cmId = mCountermove[prevMoveId];
+	  for (int i = front; i < static_cast<int>(legal_moves.size()); i++) {
+	    if (legal_moves[i].mLegalWordId == cmId) {
+	      std::swap(legal_moves[front], legal_moves[i]);
+	      front++;
+	      break;
+	    }
+	  }
+	}
+	if (depth >= 3 && front < static_cast<int>(legal_moves.size())) {
+	  const int* hist = mHistory;
+	  std::stable_sort(legal_moves.begin() + front, legal_moves.end(),
+	    [hist](const M& a, const M& b) {
+	      int ha = (a.mLegalWordId >= 0 && a.mLegalWordId < HISTORY_TABLE_SIZE)
+		       ? hist[a.mLegalWordId] : 0;
+	      int hb = (b.mLegalWordId >= 0 && b.mLegalWordId < HISTORY_TABLE_SIZE)
+		       ? hist[b.mLegalWordId] : 0;
+	      return ha > hb;
+	    });
+	}
+      }
+
+      // At non-root: sort by history (staged moves will be skipped).
+      if (indent > 0 && depth >= 3 && !legal_moves.empty()) {
+	const int* hist = mHistory;
+	std::stable_sort(legal_moves.begin(), legal_moves.end(),
+	  [hist](const M& a, const M& b) {
+	    int ha = (a.mLegalWordId >= 0 && a.mLegalWordId < HISTORY_TABLE_SIZE)
+		     ? hist[a.mLegalWordId] : 0;
+	    int hb = (b.mLegalWordId >= 0 && b.mLegalWordId < HISTORY_TABLE_SIZE)
+		     ? hist[b.mLegalWordId] : 0;
+	    return ha > hb;
+	  });
+      }
+
+      for (const auto& move : legal_moves) {
+	// Skip moves already searched in stages 1-3.
+	bool dup = false;
+	for (int j = 0; j < num_staged; j++) {
+	  if (staged_ids[j] == move.mLegalWordId) { dup = true; break; }
+	}
+	if (dup) continue;
+
+	searchMove(move);
+	if (search_stopped) break;
+      }
+
+      if (!found_best_move && !legal_moves.empty()) {
+	best_move = legal_moves[random.uniform(0, legal_moves.size() - 1)];
       }
     }
 
     if (mUseTranspositionTable && completed) {
       update_tt(state, alpha_original, beta, max_goodness, best_move, depth);
-    }
-
-    // If no best move is found, then any move is good as any other.
-    // Perhaps just picking the zero'th move is better, since they are sorted,
-    // theoretically by best...
-    if (!found_best_move) {
-      best_move = legal_moves[random.uniform(0, legal_moves.size() - 1)];
     }
     return {max_goodness, best_move, completed};
   }

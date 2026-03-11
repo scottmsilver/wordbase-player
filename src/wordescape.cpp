@@ -456,11 +456,64 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   mBoard(rhs.mBoard),
   mState(rhs.mState), mPlayedWords(rhs.mPlayedWords), mHashValue(rhs.mHashValue), mTtVerificationKey(rhs.mTtVerificationKey), mGoodnessAccum(rhs.mGoodnessAccum), mTookEnemyCell(false),
   mPlayer1Bits(rhs.mPlayer1Bits), mPlayer2Bits(rhs.mPlayer2Bits) {
+    mSearchDepthRemaining = rhs.mSearchDepthRemaining;
   }
 
   WordBaseState clone() const override {
     return WordBaseState(*this);
   }
+
+  // Lightweight state snapshot that excludes mPlayedWords (~1KB).
+  // Used by the search to save/restore state around make_move, with
+  // played-word changes undone incrementally (5-6x less data to copy).
+  struct LightSnapshot {
+    WordBaseGridState mState;           // 130 bytes
+    size_t mHashValue;                  // 8
+    uint64_t mTtVerificationKey;        // 8
+    int mGoodnessAccum;                 // 4
+    char player_to_move;                // 1
+    BitBoard mPlayer1Bits, mPlayer2Bits; // 48
+    int mSearchDepthRemaining;          // 4
+    // Saved played-word bits that were false before make_move and set to true.
+    // Only these bits should be cleared during undo (parent-level bits stay).
+    LegalWordId changedIds[8];
+    int numChanged;
+    // Total: ~239 bytes vs ~1236 bytes for full state
+  };
+
+  LightSnapshot takeSnapshot(const WordBaseMove& move) const {
+    LightSnapshot s = {mState, mHashValue, mTtVerificationKey, mGoodnessAccum,
+                       player_to_move, mPlayer1Bits, mPlayer2Bits,
+                       mSearchDepthRemaining, {}, 0};
+    // Record which equivalent-word bits are currently false (will be set by make_move).
+    const std::vector<LegalWordId>& eqIds = mBoard->getEquivalentLegalWordIds(move.mLegalWordId);
+    for (auto id : eqIds) {
+      if (!mPlayedWords[id]) {
+        s.changedIds[s.numChanged++] = id;
+        if (s.numChanged >= 8) break;  // safety cap
+      }
+    }
+    return s;
+  }
+
+  void restoreSnapshot(const LightSnapshot& s) {
+    // First, clear only the played-word bits that were actually changed.
+    for (int i = 0; i < s.numChanged; i++) {
+      mPlayedWords.set(s.changedIds[i], false);
+    }
+    // Then restore all other state fields.
+    mState = s.mState;
+    mHashValue = s.mHashValue;
+    mTtVerificationKey = s.mTtVerificationKey;
+    mGoodnessAccum = s.mGoodnessAccum;
+    player_to_move = s.player_to_move;
+    mPlayer1Bits = s.mPlayer1Bits;
+    mPlayer2Bits = s.mPlayer2Bits;
+    mSearchDepthRemaining = s.mSearchDepthRemaining;
+  }
+
+  // No-op: played word undo is now handled inside restoreSnapshot.
+  void undoPlayedWords(const WordBaseMove&) {}
 
   const WordBaseGridState& getGridState() const { return mState; }
   const BoardStatic& getBoardStatic() const { return *mBoard; }
@@ -927,21 +980,14 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     //
     // We only flood-fill from the enemy's home edge, cutting work roughly in half
     // vs checking both players.
-    if (mTookEnemyCell) {
+    // Skip the expensive flood-fill connectivity check at shallow search
+    // depths (lazy evaluation). The flood fill accounts for ~20% of total
+    // search time. At depth <= 1, we're about to evaluate the leaf — the
+    // slight inaccuracy from not removing disconnected enemy cells is
+    // offset by the speed gain (more nodes searched at deeper levels).
+    if (mTookEnemyCell && mSearchDepthRemaining > 1) {
       const char enemy = get_enemy(player_to_move);
 
-      // Use incrementally maintained bitboards instead of scanning all 130
-      // grid cells. The player bitboards are kept in sync by setCellState,
-      // so they're already up-to-date after recordMove.
-      //
-      // Example after P1 plays "CAT" capturing (1,1) and (1,2) from P2:
-      //
-      //   mPlayer2Bits (enemy):    homeEdge (P2, row 3):
-      //   . . . . .                . . . . .
-      //   . . . . .                . . . . .
-      //   . 1 . . .                . . . . .
-      //   1 1 1 1 1                1 1 1 1 1
-      //
       const BitBoard& enemyBits = (enemy == PLAYER_1) ? mPlayer1Bits : mPlayer2Bits;
       const BitBoard& edgeMask = (enemy == PLAYER_1) ? sRow0Mask : sRow12Mask;
       BitBoard homeEdge = enemyBits & edgeMask;

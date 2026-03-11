@@ -19,9 +19,10 @@ namespace {
 
   struct TestMove : public Move<TestMove> {
     int mId = 0;
+    int mLegalWordId = -1;
 
     TestMove() = default;
-    explicit TestMove(int id) : mId(id) {}
+    explicit TestMove(int id) : mId(id), mLegalWordId(id) {}
 
     void read() {}
     std::ostream& to_stream(std::ostream& os) const {

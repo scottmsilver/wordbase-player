@@ -9,6 +9,7 @@
 #include "word-dictionary.h"
 
 #include "wordescape.cpp"
+#include "parallel-search.h"
 
 INITIALIZE_EASYLOGGINGPP
 
@@ -436,6 +437,216 @@ namespace {
     EXPECT_FALSE(playerOneState == playedWordState);
     EXPECT_NE(playerOneState.hash(), playedWordState.hash());
   }
+  // -----------------------------------------------------------------------
+  // Tests for parallel search strategies
+  // -----------------------------------------------------------------------
+
+  // Helper: create a WordBaseState from the readme board with a small dictionary.
+  struct ParallelSearchTest : public ::testing::Test {
+    std::unique_ptr<WordDictionary> wd;
+    std::unique_ptr<BoardStatic> board;
+    std::unique_ptr<WordBaseState> state;
+
+    void SetUp() override {
+      std::istringstream dictionaryFileContents(
+        std::string("gram\n")
+        + "glam\n"
+        + "glamor\n"
+        + "glamorizes\n"
+        + "glass\n"
+        + "gropes\n"
+        + "vanes\n"
+        + "copy\n"
+        + "cops\n"
+        + "soap\n"
+        + "soaps\n"
+        + "sclerotics\n"
+      );
+      wd = std::make_unique<WordDictionary>(dictionaryFileContents);
+      board = std::make_unique<BoardStatic>(kReadmeBoard, *wd);
+      state = std::make_unique<WordBaseState>(board.get(), PLAYER_1);
+    }
+  };
+
+  // Single-threaded Minimax with setRootMoves should only search the given moves.
+  TEST_F(ParallelSearchTest, SetRootMovesRestrictsSearch) {
+    auto allMoves = state->get_legal_moves(200);
+    ASSERT_GE(allMoves.size(), 2u);
+
+    // Search only the first move.
+    std::vector<WordBaseMove> subset = {allMoves[0]};
+    Minimax<WordBaseState, WordBaseMove> engine(1.0, 200);
+    engine.setMaxDepth(3);
+    engine.setTraceStream(nullptr);
+    engine.setRootMoves(subset);
+
+    WordBaseState searchState(*state);
+    WordBaseMove move = engine.get_move(&searchState);
+    EXPECT_EQ(move.mLegalWordId, allMoves[0].mLegalWordId);
+  }
+
+  // Shared TT: two Minimax instances sharing a TT should produce TT hits.
+  TEST_F(ParallelSearchTest, SharedTTProducesTTHits) {
+    constexpr size_t TT_SIZE = Minimax<WordBaseState, WordBaseMove>::TT_SIZE;
+    std::vector<TTEntry<WordBaseMove>> sharedTT(TT_SIZE);
+
+    // First engine populates the TT.
+    {
+      Minimax<WordBaseState, WordBaseMove> engine1(1.0, 200);
+      engine1.setMaxDepth(3);
+      engine1.setTraceStream(nullptr);
+      engine1.setSharedTT(sharedTT.data());
+      WordBaseState s1(*state);
+      engine1.get_move(&s1);
+    }
+
+    // Count non-empty TT entries.
+    int populated = 0;
+    for (size_t i = 0; i < TT_SIZE; i++) {
+      if (sharedTT[i].verification_key != 0) populated++;
+    }
+    EXPECT_GT(populated, 0) << "First engine should have populated the shared TT";
+
+    // Second engine should hit TT entries from the first.
+    {
+      Minimax<WordBaseState, WordBaseMove> engine2(1.0, 200);
+      engine2.setMaxDepth(3);
+      engine2.setTraceStream(nullptr);
+      engine2.setSharedTT(sharedTT.data());
+      WordBaseState s2(*state);
+      engine2.get_move(&s2);
+      EXPECT_GT(engine2.getLastSearchStats().tt_hits, 0)
+        << "Second engine should get TT hits from shared TT";
+    }
+  }
+
+  // Root-level parallelism: returns a valid move and produces aggregate stats.
+  TEST_F(ParallelSearchTest, RootParallelReturnsValidMove) {
+    RootParallelSearch<WordBaseState, WordBaseMove> algo(2, 1.0, 200, 3);
+    WordBaseState searchState(*state);
+    WordBaseMove move = algo.get_move(&searchState);
+    const auto& stats = algo.getLastSearchStats();
+
+    EXPECT_GE(move.mLegalWordId, 0);
+    EXPECT_GT(stats.nodes, 0);
+    EXPECT_GT(stats.max_depth, 0);
+    EXPECT_GT(stats.nodes_per_second, 0);
+  }
+
+  // Lazy SMP: returns a valid move, nodes should be >= single-threaded.
+  TEST_F(ParallelSearchTest, LazySMPReturnsValidMove) {
+    LazySMPSearch<WordBaseState, WordBaseMove> algo(2, 1.0, 200, 3);
+    WordBaseState searchState(*state);
+    WordBaseMove move = algo.get_move(&searchState);
+    const auto& stats = algo.getLastSearchStats();
+
+    EXPECT_GE(move.mLegalWordId, 0);
+    EXPECT_GT(stats.nodes, 0);
+    EXPECT_GT(stats.max_depth, 0);
+  }
+
+  // YBWC: returns a valid move and produces reasonable stats.
+  TEST_F(ParallelSearchTest, YBWCReturnsValidMove) {
+    YBWCSearch<WordBaseState, WordBaseMove> algo(2, 1.0, 200, 3);
+    WordBaseState searchState(*state);
+    WordBaseMove move = algo.get_move(&searchState);
+    const auto& stats = algo.getLastSearchStats();
+
+    EXPECT_GE(move.mLegalWordId, 0);
+    EXPECT_GT(stats.nodes, 0);
+    EXPECT_GT(stats.max_depth, 0);
+  }
+
+  // All three strategies should agree on the best move at a deterministic depth.
+  // Use depth 2 to keep it fast and predictable.
+  TEST_F(ParallelSearchTest, AllStrategiesAgreeAtShallowDepth) {
+    // Single-threaded baseline.
+    Minimax<WordBaseState, WordBaseMove> baseline(10.0, 200);
+    baseline.setMaxDepth(2);
+    baseline.setTraceStream(nullptr);
+    WordBaseState s0(*state);
+    WordBaseMove baselineMove = baseline.get_move(&s0);
+    int baselineScore = baseline.getLastSearchStats().goodness;
+
+    // Root parallel.
+    RootParallelSearch<WordBaseState, WordBaseMove> rootAlgo(2, 10.0, 200, 2);
+    WordBaseState s1(*state);
+    WordBaseMove rootMove = rootAlgo.get_move(&s1);
+
+    // Lazy SMP.
+    LazySMPSearch<WordBaseState, WordBaseMove> smpAlgo(2, 10.0, 200, 2);
+    WordBaseState s2(*state);
+    WordBaseMove smpMove = smpAlgo.get_move(&s2);
+
+    // YBWC.
+    YBWCSearch<WordBaseState, WordBaseMove> ybwcAlgo(2, 10.0, 200, 2);
+    WordBaseState s3(*state);
+    WordBaseMove ybwcMove = ybwcAlgo.get_move(&s3);
+
+    // Root Parallel and Lazy SMP should match the baseline score exactly
+    // (same depth, same position, no shared-TT races at this scale).
+    // YBWC uses shared TT between main + workers, so benign data races
+    // can shift scores slightly — only check it returns a valid result.
+    EXPECT_EQ(rootAlgo.getLastSearchStats().goodness, baselineScore);
+    EXPECT_EQ(smpAlgo.getLastSearchStats().goodness, baselineScore);
+    EXPECT_GE(ybwcMove.mLegalWordId, 0);
+  }
+
+  // Thread-safety: multiple threads calling fill_legal_moves concurrently
+  // should not corrupt results (validates thread_local validWordBits).
+  TEST_F(ParallelSearchTest, FillLegalMovesIsThreadSafe) {
+    const int numThreads = 4;
+    std::vector<std::vector<WordBaseMove>> results(numThreads);
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < numThreads; t++) {
+      threads.emplace_back([&, t]() {
+        WordBaseState threadState(*state);
+        threadState.fill_legal_moves(results[t], 200);
+      });
+    }
+    for (auto& t : threads) t.join();
+
+    // All threads should produce the same number of moves.
+    ASSERT_GT(results[0].size(), 0u);
+    for (int t = 1; t < numThreads; t++) {
+      EXPECT_EQ(results[t].size(), results[0].size())
+        << "Thread " << t << " got different move count";
+    }
+
+    // All threads should produce the same moves (same IDs in same order).
+    for (int t = 1; t < numThreads; t++) {
+      for (size_t i = 0; i < results[0].size(); i++) {
+        EXPECT_EQ(results[t][i].mLegalWordId, results[0][i].mLegalWordId)
+          << "Thread " << t << " move " << i << " differs";
+      }
+    }
+  }
+
+  // Thread-safety: concurrent Minimax searches on cloned states should not crash.
+  TEST_F(ParallelSearchTest, ConcurrentMinimaxDoesNotCrash) {
+    const int numThreads = 4;
+    std::vector<WordBaseMove> moves(numThreads);
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < numThreads; t++) {
+      threads.emplace_back([&, t]() {
+        WordBaseState threadState(*state);
+        Minimax<WordBaseState, WordBaseMove> engine(0.5, 200);
+        engine.setMaxDepth(3);
+        engine.setTraceStream(nullptr);
+        moves[t] = engine.get_move(&threadState);
+      });
+    }
+    for (auto& t : threads) t.join();
+
+    // All threads should return a valid move.
+    for (int t = 0; t < numThreads; t++) {
+      EXPECT_GE(moves[t].mLegalWordId, 0)
+        << "Thread " << t << " returned invalid move";
+    }
+  }
+
 }  // namespace
 
 

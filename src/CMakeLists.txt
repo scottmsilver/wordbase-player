@@ -40,6 +40,7 @@ FetchContent_MakeAvailable(googletest)
 
 option(WORDBASE_USE_SIMD "Enable AVX2 SIMD optimizations for hot paths" OFF)
 
+find_package(Threads REQUIRED)
 find_package(Boost 1.45 REQUIRED COMPONENTS timer)
 find_package(OpenSSL REQUIRED)
 
@@ -80,7 +81,7 @@ if (NOT WORDBASE_READLINE_INCLUDE_DIR OR NOT WORDBASE_READLINE_LIBRARY)
 endif()
 
 add_executable(example example.cpp obstack/obstack.cpp)
-target_link_libraries(example PRIVATE gtest gtest_main ${Boost_LIBRARIES})
+target_link_libraries(example PRIVATE gtest gtest_main ${Boost_LIBRARIES} Threads::Threads)
 add_test(NAME example_test COMMAND example)
 
 configure_file(
@@ -94,7 +95,7 @@ add_test(
 add_executable(perf-test perf-test.cpp obstack/obstack.cpp)
 target_compile_definitions(perf-test PRIVATE HAS_BOOST)
 target_include_directories(perf-test PRIVATE ${Boost_INCLUDE_DIRS})
-target_link_libraries(perf-test PRIVATE ${Boost_LIBRARIES})
+target_link_libraries(perf-test PRIVATE ${Boost_LIBRARIES} Threads::Threads)
 
 add_executable(decrypt decrypt.cpp)
 target_include_directories(decrypt PRIVATE

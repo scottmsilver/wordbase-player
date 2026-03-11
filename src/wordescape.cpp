@@ -768,7 +768,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
   // word may appear through multiple paths.
   // Also note that words which are already played are excluded.
   std::vector<WordBaseMove> get_legal_moves2(int max_moves, const char* filter) const {
-    static InlineBitset validWordBits;
+    thread_local InlineBitset validWordBits;
     const int legalWordsSize = mBoard->getLegalWordsSize();
     validWordBits = InlineBitset(legalWordsSize);
 
@@ -819,7 +819,7 @@ struct WordBaseState : public State<WordBaseState, WordBaseMove> {
     // the per-cell word bitsets, keeping all OR operations in L1/L2 cache.
     // Previously used boost::dynamic_bitset (heap-allocated), where ~65 ORs
     // of ~1KB bitsets = ~65KB of heap memory traffic per call.
-    static InlineBitset validWordBits;
+    thread_local InlineBitset validWordBits;
     const int legalWordsSize = mBoard->getLegalWordsSize();
     validWordBits = InlineBitset(legalWordsSize);
 

@@ -392,6 +392,9 @@ struct Minimax : public Algorithm<S, M> {
   static constexpr size_t TT_SIZE = 1ULL << TT_SIZE_BITS;
   static constexpr size_t TT_MASK = TT_SIZE - 1;
   std::vector<TTEntry<M>> flat_tt;
+  // External TT for shared-TT parallel modes (Lazy SMP, YBWC).
+  // When non-null, TT operations use this instead of flat_tt.
+  TTEntry<M>* mSharedTTPtr = nullptr;
 
   double MAX_SECONDS;
   const int MAX_MOVES;
@@ -425,6 +428,12 @@ struct Minimax : public Algorithm<S, M> {
   int mCountermove[HISTORY_TABLE_SIZE];  // stores LegalWordId of best response
   bool mCountermoveValid[HISTORY_TABLE_SIZE];
 
+  // Per-instance move buffers for each ply (replaces function-local static
+  // depth_move_buffers[], which was not thread-safe).
+  std::vector<M> mDepthMoveBuffers[MAX_PLY];
+  // When true, mCachedRootMoves was set externally and should not be cleared.
+  bool mRootMovesLocked = false;
+
   struct RootMoveScore {
     M move;
     int score;
@@ -446,7 +455,9 @@ struct Minimax : public Algorithm<S, M> {
   }
 
   void reset() override {
-    memset(flat_tt.data(), 0, flat_tt.size() * sizeof(TTEntry<M>));
+    if (!mSharedTTPtr) {
+      memset(flat_tt.data(), 0, flat_tt.size() * sizeof(TTEntry<M>));
+    }
   }
 
   void setMaxSeconds(double seconds) {
@@ -463,6 +474,23 @@ struct Minimax : public Algorithm<S, M> {
 
   void setTraceStream(std::ostream* traceStream) {
     mTraceStream = traceStream;
+  }
+
+  // Use a shared transposition table (for Lazy SMP / YBWC parallel modes).
+  // Frees the local flat_tt to save memory.
+  void setSharedTT(TTEntry<M>* ptr) {
+    mSharedTTPtr = ptr;
+    if (ptr) {
+      flat_tt.clear();
+      flat_tt.shrink_to_fit();
+    }
+  }
+
+  // Override root moves (for parallel search: each thread gets a subset).
+  void setRootMoves(const std::vector<M>& moves) {
+    mCachedRootMoves = moves;
+    mHasCachedRootMoves = true;
+    mRootMovesLocked = true;
   }
 
   const SearchStats& getLastSearchStats() const {
@@ -484,7 +512,9 @@ struct Minimax : public Algorithm<S, M> {
     // Age the history table: halve all values to prevent overflow and
     // let recent iterations dominate.
     for (int i = 0; i < HISTORY_TABLE_SIZE; ++i) mHistory[i] >>= 1;
-    mHasCachedRootMoves = false;
+    if (!mRootMovesLocked) {
+      mHasCachedRootMoves = false;
+    }
     M best_move;
     mLastCompletedRootScores.clear();
     for (int max_depth = 1; max_depth <= mMaxDepth; ++max_depth) {
@@ -698,10 +728,9 @@ struct Minimax : public Algorithm<S, M> {
 
     // Stage 4: Generate all remaining moves (skipped if a staged move caused cutoff).
     if (!search_stopped) {
-      static std::vector<M> depth_move_buffers[64];
       std::vector<M>& legal_moves = (indent == 0 && mHasCachedRootMoves)
 	? mCachedRootMoves
-	: depth_move_buffers[indent];
+	: mDepthMoveBuffers[indent];
       if (!(indent == 0 && mHasCachedRootMoves)) {
 	state->fill_legal_moves(legal_moves, MAX_MOVES);
       }
@@ -801,7 +830,8 @@ struct Minimax : public Algorithm<S, M> {
   //     no  → miss (slot empty or holds a different position)
   bool get_tt_entry(S *state, TTEntry<M> &entry) {
     auto key = state->hash();
-    auto& slot = flat_tt[key & TT_MASK];
+    TTEntry<M>* tt = mSharedTTPtr ? mSharedTTPtr : flat_tt.data();
+    auto& slot = tt[key & TT_MASK];
     if (slot.verification_key != state->tt_verification_key()) {
       return false;
     }
@@ -813,7 +843,8 @@ struct Minimax : public Algorithm<S, M> {
   // is occupied by a different position, it's silently overwritten.
   void add_tt_entry(S *state, const TTEntry<M> &entry) {
     auto key = state->hash();
-    flat_tt[key & TT_MASK] = entry;
+    TTEntry<M>* tt = mSharedTTPtr ? mSharedTTPtr : flat_tt.data();
+    tt[key & TT_MASK] = entry;
   }
 
   void update_tt(S *state, int alpha, int beta, int max_goodness, M &best_move, int depth) {

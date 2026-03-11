@@ -9,6 +9,7 @@
 #include "easylogging++.h"
 #include "word-dictionary.h"
 #include "wordescape.cpp"
+#include "parallel-search.h"
 
 INITIALIZE_EASYLOGGINGPP
 
@@ -31,6 +32,8 @@ struct PerfOptions {
   std::string selfplayOutPath;
   bool useTranspositionTable = true;
   bool printBoards = false;
+  int threads = 1;
+  std::string parallelMode;  // "", "root", "lazysmp", "ybwc"
 };
 
 struct AggregateStats {
@@ -74,6 +77,8 @@ void printUsage(const char* argv0) {
     << "  --selfplay-out <path>    Write self-play JSONL to this file\n"
     << "  --no-tt                  Disable the transposition table\n"
     << "  --print-boards           Print the board after each move\n"
+    << "  --threads <N>            Number of search threads (default 1)\n"
+    << "  --parallel-mode <mode>   Parallel strategy: root, lazysmp, ybwc\n"
     ;
 }
 
@@ -109,6 +114,10 @@ PerfOptions parseArgs(int argc, char** argv) {
       options.useTranspositionTable = false;
     } else if (arg == "--print-boards") {
       options.printBoards = true;
+    } else if (arg == "--threads" && index < argc) {
+      options.threads = std::stoi(argv[index++], nullptr, 0);
+    } else if (arg == "--parallel-mode" && index < argc) {
+      options.parallelMode = argv[index++];
     } else {
       printUsage(argv[0]);
       throw std::invalid_argument("Unknown or incomplete argument: " + arg);
@@ -126,6 +135,15 @@ PerfOptions parseArgs(int argc, char** argv) {
   }
   if (options.selfplayGames > 0 && options.selfplayOutPath.empty()) {
     throw std::invalid_argument("--selfplay-out is required when --selfplay-games is set");
+  }
+  if (options.threads < 1) {
+    throw std::invalid_argument("--threads must be >= 1");
+  }
+  if (!options.parallelMode.empty() &&
+      options.parallelMode != "root" &&
+      options.parallelMode != "lazysmp" &&
+      options.parallelMode != "ybwc") {
+    throw std::invalid_argument("--parallel-mode must be root, lazysmp, or ybwc");
   }
 
   return options;
@@ -324,6 +342,47 @@ int main(int argc, char** argv) {
 
     auto algorithm = makeAlgorithm();
 
+    // Parallel search algorithms (created once, reused across turns).
+    using MmStats = Minimax<WordBaseState, WordBaseMove>::SearchStats;
+    std::unique_ptr<RootParallelSearch<WordBaseState, WordBaseMove>> rootParallel;
+    std::unique_ptr<LazySMPSearch<WordBaseState, WordBaseMove>> lazySMP;
+    std::unique_ptr<YBWCSearch<WordBaseState, WordBaseMove>> ybwc;
+    const bool useParallel = options.threads > 1 && !options.parallelMode.empty();
+    if (useParallel) {
+      if (options.parallelMode == "root") {
+        rootParallel = std::make_unique<RootParallelSearch<WordBaseState, WordBaseMove>>(
+          options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
+          options.maxDepth, options.useTranspositionTable);
+      } else if (options.parallelMode == "lazysmp") {
+        lazySMP = std::make_unique<LazySMPSearch<WordBaseState, WordBaseMove>>(
+          options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
+          options.maxDepth, options.useTranspositionTable);
+      } else if (options.parallelMode == "ybwc") {
+        ybwc = std::make_unique<YBWCSearch<WordBaseState, WordBaseMove>>(
+          options.threads, options.maxSecondsPerMove, options.maxMovesPerPosition,
+          options.maxDepth, options.useTranspositionTable);
+      }
+      std::cout << "parallel_mode=" << options.parallelMode
+                << " threads=" << options.threads << std::endl;
+    }
+
+    // Unified search dispatch: returns (move, stats).
+    auto doSearch = [&](WordBaseState& searchState) -> std::pair<WordBaseMove, MmStats> {
+      if (rootParallel) {
+        auto m = rootParallel->get_move(&searchState);
+        return {m, rootParallel->getLastSearchStats()};
+      } else if (lazySMP) {
+        auto m = lazySMP->get_move(&searchState);
+        return {m, lazySMP->getLastSearchStats()};
+      } else if (ybwc) {
+        auto m = ybwc->get_move(&searchState);
+        return {m, ybwc->getLastSearchStats()};
+      } else {
+        auto m = algorithm.get_move(&searchState);
+        return {m, algorithm.getLastSearchStats()};
+      }
+    };
+
     Timer gameTimer;
     AggregateStats aggregateStats;
     bool measuring = options.warmupTurns == 0;
@@ -344,9 +403,8 @@ int main(int argc, char** argv) {
       WordBaseState searchState(state);
       Timer moveTimer;
       moveTimer.start();
-      WordBaseMove move = algorithm.get_move(&searchState);
+      auto [move, searchStats] = doSearch(searchState);
       double moveSeconds = moveTimer.seconds_elapsed();
-      const auto& searchStats = algorithm.getLastSearchStats();
 
       if (measuring) {
         aggregateStats.record(searchStats, legalMoves.size());
@@ -396,13 +454,11 @@ int main(int argc, char** argv) {
         Timer repeatedSearchTimer;
         repeatedSearchTimer.start();
         for (int repeat = 0; repeat < options.repeatSearches; ++repeat) {
-          auto repeatedAlgorithm = makeAlgorithm();
           WordBaseState searchState(state);
           Timer moveTimer;
           moveTimer.start();
-          WordBaseMove move = repeatedAlgorithm.get_move(&searchState);
+          auto [move, searchStats] = doSearch(searchState);
           double moveSeconds = moveTimer.seconds_elapsed();
-          const auto& searchStats = repeatedAlgorithm.getLastSearchStats();
           repeatedSearchStats.record(searchStats, legalMoves.size());
 
           const LegalWord& legalWord = board.getLegalWord(move.mLegalWordId);

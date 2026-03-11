@@ -643,17 +643,31 @@ struct Minimax : public Algorithm<S, M> {
 
     // Common logic for searching one move. Uses lightweight snapshot
     // (excludes mPlayedWords ~1KB) instead of full state copy.
-    auto searchMove = [&](const M& move) {
+    // reduction: number of plies to reduce depth by (0 = full search).
+    auto searchMove = [&](const M& move, int reduction = 0) {
       auto snap = state->takeSnapshot(move);
       state->mSearchDepthRemaining = depth;
       state->make_move(move);
-      const int goodness = -minimax(
+      int goodness = -minimax(
+				    state,
+				    depth - 1 - reduction,
+				    -beta,
+				    -alpha,
+				    indent + 1,
+				    move.mLegalWordId).goodness;
+
+      // LMR re-search: if the reduced search improved alpha, the move
+      // might be better than we thought — re-search at full depth.
+      if (reduction > 0 && goodness > alpha) {
+	goodness = -minimax(
 				    state,
 				    depth - 1,
 				    -beta,
 				    -alpha,
 				    indent + 1,
 				    move.mLegalWordId).goodness;
+      }
+
       ++moves_searched;
       VLOG(9) << *state << std::endl;
 
@@ -821,7 +835,20 @@ struct Minimax : public Algorithm<S, M> {
 	}
 	if (dup) continue;
 
-	searchMove(move);
+	// Late Move Reduction: moves searched after the first few at
+	// non-root nodes with sufficient depth are searched at reduced
+	// depth first. If the reduced search beats alpha, re-search at
+	// full depth (handled inside searchMove).
+	int reduction = 0;
+	if (indent > 0 && depth >= 3 && moves_searched >= 3) {
+	  // Base reduction: 1 ply. Increase for very late moves.
+	  reduction = 1;
+	  if (moves_searched >= 8) reduction = 2;
+	  // Don't reduce below depth 1.
+	  if (reduction >= depth - 1) reduction = depth - 2;
+	  if (reduction < 0) reduction = 0;
+	}
+	searchMove(move, reduction);
 	if (search_stopped) break;
       }
 

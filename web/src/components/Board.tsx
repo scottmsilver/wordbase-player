@@ -10,6 +10,7 @@ interface BoardProps {
   currentPlayer: CellOwner.PLAYER_1 | CellOwner.PLAYER_2;
   gameOver: boolean;
   selectedPath: Position[];
+  hintPath: Position[];
   onPathUpdate: (path: Position[]) => void;
 }
 
@@ -18,6 +19,7 @@ export const Board: React.FC<BoardProps> = ({
   currentPlayer,
   gameOver,
   selectedPath,
+  hintPath,
   onPathUpdate,
 }) => {
   const boardRef = useRef<View>(null);
@@ -163,6 +165,10 @@ export const Board: React.FC<BoardProps> = ({
     () => new Set(selectedPath.map(p => `${p.row},${p.col}`)),
     [selectedPath]
   );
+  const hintSet = useMemo(
+    () => new Set(hintPath.map(p => `${p.row},${p.col}`)),
+    [hintPath]
+  );
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width } = event.nativeEvent.layout;
@@ -185,6 +191,7 @@ export const Board: React.FC<BoardProps> = ({
                 letter={cell.letter}
                 owner={cell.owner}
                 isSelected={selectedSet.has(key)}
+                isHint={hintSet.has(key)}
                 size={tileSize}
               />
             );

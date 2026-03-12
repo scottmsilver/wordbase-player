@@ -1,11 +1,12 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Platform, Animated } from 'react-native';
 import { CellOwner } from '../game/types';
 
 interface TileProps {
   letter: string;
   owner: CellOwner;
   isSelected: boolean;
+  isHint: boolean;
   size: number;
 }
 
@@ -25,32 +26,55 @@ const TEXT_COLORS: Record<number, string> = {
   [CellOwner.MEGABOMB]: '#FFFFFF',
 };
 
-export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected, size }) => {
+export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected, isHint, size }) => {
+  const prevOwnerRef = useRef(owner);
+  const flipAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (prevOwnerRef.current !== owner && Platform.OS === 'web') {
+      flipAnim.setValue(0);
+      Animated.timing(flipAnim, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: false,
+      }).start();
+    }
+    prevOwnerRef.current = owner;
+  }, [owner, flipAnim]);
+
   let bgColor = COLORS[owner];
   let textColor = TEXT_COLORS[owner];
 
   if (isSelected) {
-    // Bright green highlight that stands out on any background
     bgColor = '#66BB6A';
+    textColor = '#FFFFFF';
+  } else if (isHint) {
+    bgColor = '#AB47BC';
     textColor = '#FFFFFF';
   }
 
-  const needsBorder = owner === CellOwner.UNOWNED && !isSelected;
+  const needsBorder = owner === CellOwner.UNOWNED && !isSelected && !isHint;
 
-  return (
-    <View
-      style={[
-        styles.tile,
-        {
-          width: size,
-          height: size,
-          backgroundColor: bgColor,
-          borderRightWidth: needsBorder ? StyleSheet.hairlineWidth : 0,
-          borderBottomWidth: needsBorder ? StyleSheet.hairlineWidth : 0,
-          borderColor: 'rgba(0,0,0,0.12)',
-        },
-      ]}
-    >
+  // Interpolate: scale Y from 0 → 1 (squish and expand = flip effect)
+  const scaleY = flipAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0.05, 0.05, 1],
+  });
+
+  const tileStyle = [
+    styles.tile,
+    {
+      width: size,
+      height: size,
+      backgroundColor: bgColor,
+      borderRightWidth: needsBorder ? StyleSheet.hairlineWidth : 0,
+      borderBottomWidth: needsBorder ? StyleSheet.hairlineWidth : 0,
+      borderColor: 'rgba(0,0,0,0.12)',
+    },
+  ];
+
+  const content = (
+    <>
       <Text
         style={[
           styles.letter,
@@ -75,6 +99,21 @@ export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected
           +
         </Text>
       )}
+    </>
+  );
+
+  // Wrap in Animated.View for flip effect when ownership changed
+  if (Platform.OS === 'web') {
+    return (
+      <Animated.View style={[...tileStyle, { transform: [{ scaleY }] }]}>
+        {content}
+      </Animated.View>
+    );
+  }
+
+  return (
+    <View style={tileStyle}>
+      {content}
     </View>
   );
 });

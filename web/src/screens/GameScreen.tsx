@@ -73,6 +73,7 @@ interface GameScreenProps {
 export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
   const [game, setGame] = useState<GameState>(createGame);
   const [selectedPath, setSelectedPath] = useState<Position[]>([]);
+  const [hintPath, setHintPath] = useState<Position[]>([]);
   const [message, setMessage] = useState('');
   const [showHistory, setShowHistory] = useState(true);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -94,6 +95,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
   const canSubmit = isValidWord && canPlayWord(game, selectedPath) && !isComputerTurn;
 
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hintAbortRef = useRef<AbortController | null>(null);
+
+  const showTimedMessage = useCallback((msg: string, ms: number) => {
+    setMessage(msg);
+    if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+    messageTimerRef.current = setTimeout(() => setMessage(''), ms);
+  }, []);
+
+  // Clear hint when player starts selecting or game changes
+  useEffect(() => {
+    if ((selectedPath.length > 0 || isComputerTurn) && hintPath.length > 0) {
+      setHintPath([]);
+    }
+  }, [selectedPath, isComputerTurn, hintPath.length]);
 
   const tryPlayWord = useCallback(
     (path: Position[]) => {
@@ -111,22 +126,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
       } else {
         const word = getWordFromPath(game.board, path);
         if (word.length < 2) {
-          setMessage('Too short');
+          showTimedMessage('Too short', 2000);
         } else if (!dictionary.hasWord(word.toLowerCase())) {
-          setMessage(`"${word}" not in dictionary`);
+          showTimedMessage(`"${word}" not in dictionary`, 2000);
         } else if (game.playedWords.has(word.toLowerCase())) {
-          setMessage(`"${word}" already played`);
+          showTimedMessage(`"${word}" already played`, 2000);
         } else {
           const hasOwned = path.some(p => game.board[p.row][p.col].owner === game.currentPlayer);
           if (!hasOwned) {
-            setMessage('Must include your tile');
+            showTimedMessage('Must include your tile', 2000);
           } else {
-            setMessage('Invalid move');
+            showTimedMessage('Invalid move', 2000);
           }
         }
         setSelectedPath([]);
-        if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-        messageTimerRef.current = setTimeout(() => setMessage(''), 2000);
       }
     },
     [game]
@@ -149,14 +162,36 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
 
   const handleNewGame = useCallback(() => {
     if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+    if (hintAbortRef.current) hintAbortRef.current.abort();
     setGame(createGame());
     setSelectedPath([]);
+    setHintPath([]);
     setMessage('');
   }, []);
 
   const toggleHistory = useCallback(() => {
     setShowHistory(v => !v);
   }, []);
+
+  const handleHint = useCallback(() => {
+    if (isComputerTurn || game.gameOver) return;
+    if (hintAbortRef.current) hintAbortRef.current.abort();
+    const abort = new AbortController();
+    hintAbortRef.current = abort;
+    setMessage('Getting hint...');
+    setSelectedPath([]);
+
+    // Ask engine for Player 1's best move
+    requestEngineMove(game, 2.0, 10, abort.signal).then((result) => {
+      if (abort.signal.aborted) return;
+      if (!result) {
+        showTimedMessage('Engine unavailable', 3000);
+        return;
+      }
+      setHintPath(result.path);
+      setMessage(`Hint: ${result.word.toUpperCase()}`);
+    });
+  }, [game, isComputerTurn]);
 
   // Computer player (Player 2 / blue)
   useEffect(() => {
@@ -168,9 +203,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
     requestEngineMove(game, 2.0, 10, abortController.signal).then((result) => {
       if (abortController.signal.aborted) return;
       if (!result) {
-        setMessage('Engine unavailable');
-        if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
-        messageTimerRef.current = setTimeout(() => setMessage(''), 3000);
+        showTimedMessage('Engine unavailable', 3000);
         return;
       }
 
@@ -183,6 +216,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
 
     return () => { abortController.abort(); };
   }, [game]);
+
+  const isPlayerTurn = game.currentPlayer === CellOwner.PLAYER_1 && !game.gameOver;
 
   return (
     <View style={styles.container}>
@@ -210,10 +245,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
             currentPlayer={game.currentPlayer}
             gameOver={game.gameOver}
             selectedPath={selectedPath}
+            hintPath={hintPath}
             onPathUpdate={handlePathUpdate}
           />
 
-          {/* Bottom bar: action bar, last word, or game over */}
+          {/* Bottom bar */}
           {selectedPath.length > 0 ? (
             <View style={styles.actionBar}>
               <TouchableOpacity style={styles.clearBtn} onPress={handleClear} activeOpacity={0.7}>
@@ -236,19 +272,36 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
               </TouchableOpacity>
             </View>
           ) : game.gameOver ? (
-            <View style={styles.bottomBar}>
+            <View style={styles.gameOverBar}>
+              {game.lastWord ? (
+                <View style={styles.lastWordSection}>
+                  <Text style={styles.lastWordLabel}>
+                    {game.winner === CellOwner.PLAYER_1 ? 'ORANGE' : 'BLUE'} PLAYED
+                  </Text>
+                  <Text style={styles.lastWordHighlight}>{game.lastWord.toUpperCase()}</Text>
+                </View>
+              ) : null}
               <TouchableOpacity style={styles.newGameButton} onPress={handleNewGame}>
                 <Text style={styles.newGameText}>NEW GAME</Text>
               </TouchableOpacity>
             </View>
-          ) : game.lastWord && !message ? (
-            <View style={styles.lastWordBar}>
-              <Text style={styles.lastWordLabel}>
-                {game.currentPlayer === CellOwner.PLAYER_1 ? 'BLUE' : 'ORANGE'} PLAYED
-              </Text>
-              <Text style={styles.lastWordHighlight}>{game.lastWord.toUpperCase()}</Text>
+          ) : (
+            <View style={styles.bottomBar}>
+              {game.lastWord && !message ? (
+                <View style={styles.lastWordSection}>
+                  <Text style={styles.lastWordLabel}>
+                    {game.currentPlayer === CellOwner.PLAYER_1 ? 'BLUE' : 'ORANGE'} PLAYED
+                  </Text>
+                  <Text style={styles.lastWordHighlight}>{game.lastWord.toUpperCase()}</Text>
+                </View>
+              ) : null}
+              {isPlayerTurn && !message ? (
+                <TouchableOpacity style={styles.hintBtn} onPress={handleHint} activeOpacity={0.7}>
+                  <Text style={styles.hintBtnText}>HINT</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-          ) : null}
+          )}
         </View>
       </View>
     </View>
@@ -331,13 +384,26 @@ const styles = StyleSheet.create({
   submitBtnTextActive: {
     opacity: 1,
   },
-  lastWordBar: {
-    backgroundColor: '#333',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    alignItems: 'center',
+  bottomBar: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 12,
+  },
+  gameOverBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 16,
+  },
+  lastWordSection: {
+    backgroundColor: '#333',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
   lastWordLabel: {
@@ -352,19 +418,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FFF',
   },
-  bottomBar: {
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
   newGameButton: {
     backgroundColor: '#222',
     paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
   newGameText: {
     color: '#FFF',
     fontFamily: 'monospace',
     fontWeight: '700',
     fontSize: 16,
+  },
+  hintBtn: {
+    backgroundColor: '#AB47BC',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  hintBtnText: {
+    color: '#FFF',
+    fontFamily: 'monospace',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

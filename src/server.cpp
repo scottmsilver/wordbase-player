@@ -4,12 +4,14 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "board.h"
 #include "easylogging++.h"
 #include "word-dictionary.h"
 #include "wordescape.cpp"
+#include "parallel-search.h"
 
 INITIALIZE_EASYLOGGINGPP
 
@@ -181,11 +183,9 @@ int main(int argc, char** argv) {
         if (seconds <= 0) seconds = 2.0;
         if (maxDepth <= 0) maxDepth = 10;
 
-        Minimax<WordBaseState, WordBaseMove> algorithm(seconds, 200);
-        algorithm.setMaxDepth(maxDepth);
-        algorithm.setUseTranspositionTable(true);
-        algorithm.setTTSizeBits(18);
-        algorithm.setTraceStream(nullptr);
+        int numThreads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+        LazySMPSearch<WordBaseState, WordBaseMove> algorithm(
+            numThreads, seconds, 200, maxDepth, true, 18);
 
         WordBaseState searchState(state);
         WordBaseMove move = algorithm.get_move(&searchState);
@@ -208,6 +208,7 @@ int main(int argc, char** argv) {
                   << "\"depth\":" << stats.max_depth << ","
                   << "\"nodes\":" << stats.nodes << ","
                   << "\"nps\":" << static_cast<long long>(stats.nodes_per_second) << ","
+                  << "\"threads\":" << numThreads << ","
                   << "\"seconds\":" << stats.elapsed_seconds
                   << "}" << std::endl;
 

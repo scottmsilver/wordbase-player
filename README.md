@@ -1,14 +1,14 @@
 # wordbase-player
 Plays the game of wordbase.
 
-This tries to be a relatively fast game solver for wordbase. I've tried to optimize the playing of the game to get through the game tree pretty quickly. I try to use or move as little memory as possible when evaluating game states. Right now the big win would come from more pruning by picking better moves - essentially a better heuristic for what moves to consider. Also, I could be doing the actual picking and then sorting of the moves better too. Since this game has a pretty high branching factor, the time is dominated by sorting the moves to consider by the heuristic value of each of the possible moves.
+This is a game solver for Wordbase with a minimax/alpha-beta search engine in C++ and a web UI built with React Native (Expo). The engine uses iterative deepening, transposition tables, killer moves, history heuristic, countermove heuristic, staged move generation, and lazy flood fill to search the game tree efficiently. On a 13x10 board with ~200 legal moves per position, it reaches 8-10M nodes/second.
 
-The game also doesn't do a great job picking a "best" move when there is no way to win. Since most players are real human players adn they won't find the winning moves, this is somethign I should fix.
-
-On most games if I give it 45 seconds in the release build on a MacBook Pro from a couple of years ago I can get to depth 5.
-
-PS: I borrowed Adam's alpha-beta pruning implementation. Thanks Adam!
-PPS: The driver itself has lots more features, which I haven't documented.
+The project includes:
+- **C++ engine** (`src/`) -- minimax search with alpha-beta pruning, TT, move ordering
+- **Interactive shell** (`wordbase-driver`) -- terminal-based board explorer and move suggester
+- **Web UI** (`web/`) -- React Native (Expo) web app with human vs computer play
+- **Engine server** (`src/server.cpp` + `web/engine-server.js`) -- JSON-over-HTTP bridge for the web UI
+- **Benchmark tools** (`perf-test`, `run-benchmarks.sh`) -- self-play, profiling, A/B comparison
 
 Build
 
@@ -42,6 +42,13 @@ cmake -S src -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release --target perf-test
 ```
 
+To build the engine server for the web UI:
+
+```
+cmake -S src -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --target wordbase-server
+```
+
 If you intentionally want to use a non-system prefix such as Conda, pass it explicitly:
 
 ```
@@ -50,108 +57,31 @@ cmake --build build
 ctest --output-on-failure --test-dir build
 ```
 
-To use:
+Web UI
+
+The web UI lets you play Wordbase against the C++ engine in a browser. It uses React Native with Expo SDK 52 and React Native Web.
+
+```bash
+# Install dependencies (first time only)
+cd web && npm install
+
+# Terminal 1: Start the engine server (wraps the C++ engine as HTTP on port 3001)
+node engine-server.js
+
+# Terminal 2: Start the Expo dev server
+npx expo start --web
+```
+
+The engine server spawns `build/wordbase-server` as a child process, communicating via JSON lines over stdin/stdout. The web UI sends board state to the engine when it's the computer's turn (Player 2 / blue) and applies the returned move.
+
+If the engine server isn't running, the game shows "Engine unavailable" and you can play both sides manually.
+
+Interactive Shell
+
+To use the interactive board shell:
 ```
 ./build/wordbase-driver ./src/twl06_with_wordbase_additions.txt
 ```
-
-Benchmarking
-
-Use the checked-in benchmark scenarios instead of ad hoc command lines when comparing search changes:
-
-```
-./scripts/run-benchmarks.sh short
-./scripts/run-benchmarks.sh long
-./scripts/run-benchmarks.sh short-no-tt
-./scripts/run-benchmarks.sh profile
-./scripts/run-benchmarks.sh profile-suite
-```
-
-The current intended meanings are:
-- `short`: primary two-turn comparison baseline for small A/B changes
-- `long`: longer confirmation run with two warm-up turns
-- `short-no-tt`: same short baseline with the transposition table disabled
-- `profile`: repeated searches on the same post-warmup position so sampling profilers see steady-state search work instead of startup/setup
-- `profile-suite`: the same repeated-search measurement across several checked-in board texts so we can catch heuristics that only help one board
-
-The suite is deterministic on purpose. We keep one fixed-board benchmark for tight A/B comparisons, then use the checked-in suite in [benchmark-board-suite.txt](/home/ssilver/development/wordbase-player/scripts/benchmark-board-suite.txt) to make sure a change generalizes beyond the README board.
-
-To generate self-play data for ML experiments, `perf-test` has a JSONL self-play mode:
-
-```bash
-./build-release/perf-test ./src/twl06_with_wordbase_additions.txt \
-  --selfplay-games 10 \
-  --selfplay-out /tmp/wordbase-selfplay.jsonl \
-  --max-turns 80 \
-  --seconds 0.05
-```
-
-Each JSONL line contains either a `move` record (board text, owner grid, move word/path, search stats) or a `summary` record with the final winner.
-
-Agent Loop
-
-To keep Codex iterating without manually re-prompting every turn, use:
-
-```bash
-./scripts/agent-loop.sh
-```
-
-Useful options:
-
-```bash
-./scripts/agent-loop.sh --once
-./scripts/agent-loop.sh --interval 5
-./scripts/agent-loop.sh --max-iterations 10
-./scripts/agent-loop.sh --model gpt-5
-```
-
-The loop writes iteration logs under `logs/agent-loop/` and stops cleanly if you create:
-
-```bash
-touch logs/agent-loop/STOP
-```
-
-The standing prompt is materialized to `logs/agent-loop/prompt.txt` at startup so you can inspect or edit the loop instructions.
-
-Agent Fleet
-
-For a master/worker setup, use the fleet scripts:
-
-```bash
-./scripts/agent-fleet.sh --workers 3 --model gpt-5.4 --master-model gpt-5.4
-```
-
-Check fleet status with:
-
-```bash
-./scripts/agent-fleet-status.sh
-```
-
-For a live terminal monitor, use:
-
-```bash
-./scripts/agent-fleet-monitor.py
-```
-
-It refreshes continuously and shows queue counts, worker branches, current tasks, latest kept/discarded benchmark rows, and the most recent activity line per worker. Press `q` to quit.
-
-This starts:
-- one planning master that writes concrete experiment tasks under `logs/agent-fleet/tasks/pending`
-- multiple workers in isolated git worktrees under `.codex-workers/`
-
-The intended flow is:
-- the master proposes experiments with explicit hypotheses and benchmark commands
-- workers claim tasks one at a time, test them on scratch branches, and write results back through commits, logs, and benchmark CSV rows
-- workers should gate changes on `profile` first and then `profile-suite` before keeping them
-
-You can add your own tasks to the same queue with:
-
-```bash
-./scripts/agent-add-task.sh --title "Try safer TT move ordering"
-./scripts/agent-add-task.sh --title "Test clipped square forward reach" --open
-```
-
-That writes a markdown task into `logs/agent-fleet/tasks/pending/` with the standard benchmark gates already filled in.
 
 Create a new board. The preceding *, means a bomb at the letter after the *. A + means a super-bomb.
 ```
@@ -272,3 +202,36 @@ player(2): h=-168
 12.o.p.a.e.a.m.h.v.e.s
 
 ```
+
+Benchmarking
+
+Use the checked-in benchmark scenarios instead of ad hoc command lines when comparing search changes:
+
+```
+./scripts/run-benchmarks.sh short
+./scripts/run-benchmarks.sh long
+./scripts/run-benchmarks.sh short-no-tt
+./scripts/run-benchmarks.sh profile
+./scripts/run-benchmarks.sh profile-suite
+```
+
+The current intended meanings are:
+- `short`: primary two-turn comparison baseline for small A/B changes
+- `long`: longer confirmation run with two warm-up turns
+- `short-no-tt`: same short baseline with the transposition table disabled
+- `profile`: repeated searches on the same post-warmup position so sampling profilers see steady-state search work instead of startup/setup
+- `profile-suite`: the same repeated-search measurement across several checked-in board texts so we can catch heuristics that only help one board
+
+The suite is deterministic on purpose. We keep one fixed-board benchmark for tight A/B comparisons, then use the checked-in suite in `scripts/benchmark-board-suite.txt` to make sure a change generalizes beyond the README board.
+
+To generate self-play data for ML experiments, `perf-test` has a JSONL self-play mode:
+
+```bash
+./build-release/perf-test ./src/twl06_with_wordbase_additions.txt \
+  --selfplay-games 10 \
+  --selfplay-out /tmp/wordbase-selfplay.jsonl \
+  --max-turns 80 \
+  --seconds 0.05
+```
+
+Each JSONL line contains either a `move` record (board text, owner grid, move word/path, search stats) or a `summary` record with the final winner.

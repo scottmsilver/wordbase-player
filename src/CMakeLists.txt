@@ -97,6 +97,11 @@ target_compile_definitions(perf-test PRIVATE HAS_BOOST)
 target_include_directories(perf-test PRIVATE ${Boost_INCLUDE_DIRS})
 target_link_libraries(perf-test PRIVATE ${Boost_LIBRARIES} Threads::Threads)
 
+add_executable(wordbase-server server.cpp obstack/obstack.cpp)
+target_compile_definitions(wordbase-server PRIVATE HAS_BOOST)
+target_include_directories(wordbase-server PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(wordbase-server PRIVATE ${Boost_LIBRARIES} Threads::Threads)
+
 add_executable(decrypt decrypt.cpp)
 target_include_directories(decrypt PRIVATE
   ${OPENSSL_INCLUDE_DIR}
@@ -124,7 +129,7 @@ target_link_libraries(wordbase-driver PRIVATE
 
 if (WORDBASE_USE_SIMD)
   message(STATUS "AVX2 SIMD optimizations enabled")
-  foreach(tgt example perf-test wordbase-driver)
+  foreach(tgt example perf-test wordbase-driver wordbase-server)
     target_compile_definitions(${tgt} PRIVATE WORDBASE_USE_SIMD)
     target_compile_options(${tgt} PRIVATE -mavx2)
   endforeach()

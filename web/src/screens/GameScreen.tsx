@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { Board } from '../components/Board';
+import { Confetti } from '../components/Confetti';
 import { Header } from '../components/Header';
 import { MoveHistory } from '../components/MoveHistory';
 import { Cell, GameState, Position, CellOwner, ROWS, COLS } from '../game/types';
@@ -244,6 +245,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
             board={game.board}
             currentPlayer={game.currentPlayer}
             gameOver={game.gameOver}
+            winner={game.winner}
             selectedPath={selectedPath}
             hintPath={hintPath}
             onPathUpdate={handlePathUpdate}
@@ -304,6 +306,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({ onBack }) => {
           )}
         </View>
       </View>
+      <Confetti active={game.gameOver} />
     </View>
   );
 };

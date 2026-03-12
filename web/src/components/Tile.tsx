@@ -8,6 +8,7 @@ interface TileProps {
   isSelected: boolean;
   isHint: boolean;
   size: number;
+  celebrationDelay: number | null;
 }
 
 const COLORS: Record<number, string> = {
@@ -26,9 +27,11 @@ const TEXT_COLORS: Record<number, string> = {
   [CellOwner.MEGABOMB]: '#FFFFFF',
 };
 
-export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected, isHint, size }) => {
+export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected, isHint, size, celebrationDelay }) => {
   const prevOwnerRef = useRef(owner);
   const flipAnim = useRef(new Animated.Value(1)).current;
+  const celebAnim = useRef(new Animated.Value(1)).current;
+  const celebTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (prevOwnerRef.current !== owner && Platform.OS === 'web') {
@@ -41,6 +44,28 @@ export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected
     }
     prevOwnerRef.current = owner;
   }, [owner, flipAnim]);
+
+  // Celebration wave: delayed scale pulse
+  useEffect(() => {
+    if (celebrationDelay === null) {
+      celebAnim.stopAnimation();
+      celebAnim.setValue(1);
+      if (celebTimerRef.current) clearTimeout(celebTimerRef.current);
+      return;
+    }
+    celebTimerRef.current = setTimeout(() => {
+      celebAnim.setValue(0);
+      Animated.timing(celebAnim, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: false,
+      }).start();
+    }, celebrationDelay);
+    return () => {
+      if (celebTimerRef.current) clearTimeout(celebTimerRef.current);
+      celebAnim.stopAnimation();
+    };
+  }, [celebrationDelay, celebAnim]);
 
   let bgColor = COLORS[owner];
   let textColor = TEXT_COLORS[owner];
@@ -59,6 +84,12 @@ export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected
   const scaleY = flipAnim.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: [0.05, 0.05, 1],
+  });
+
+  // Celebration: pop up then settle back
+  const celebScale = celebAnim.interpolate({
+    inputRange: [0, 0.4, 1],
+    outputRange: [0.6, 1.15, 1],
   });
 
   const tileStyle = [
@@ -105,7 +136,7 @@ export const Tile: React.FC<TileProps> = React.memo(({ letter, owner, isSelected
   // Wrap in Animated.View for flip effect when ownership changed
   if (Platform.OS === 'web') {
     return (
-      <Animated.View style={[...tileStyle, { transform: [{ scaleY }] }]}>
+      <Animated.View style={[...tileStyle, { transform: [{ scaleY }, { scale: celebScale }] }]}>
         {content}
       </Animated.View>
     );

@@ -9,15 +9,19 @@ interface BoardProps {
   board: Cell[][];
   currentPlayer: CellOwner.PLAYER_1 | CellOwner.PLAYER_2;
   gameOver: boolean;
+  winner: CellOwner.PLAYER_1 | CellOwner.PLAYER_2 | null;
   selectedPath: Position[];
   hintPath: Position[];
   onPathUpdate: (path: Position[]) => void;
 }
 
+const ROW_DELAY_MS = 80;
+
 export const Board: React.FC<BoardProps> = ({
   board,
   currentPlayer,
   gameOver,
+  winner,
   selectedPath,
   hintPath,
   onPathUpdate,
@@ -193,6 +197,14 @@ export const Board: React.FC<BoardProps> = ({
                 isSelected={selectedSet.has(key)}
                 isHint={hintSet.has(key)}
                 size={tileSize}
+                celebrationDelay={
+                  gameOver && winner
+                    ? (winner === CellOwner.PLAYER_1
+                        ? (ROWS - 1 - rowIdx)
+                        : rowIdx
+                      ) * ROW_DELAY_MS
+                    : null
+                }
               />
             );
           })}

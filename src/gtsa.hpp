@@ -651,7 +651,12 @@ struct Minimax : public Algorithm<S, M> {
     M best_move;
     if (depth == 0 || state->is_terminal()) {
       ++leafs;
-      const int goodness = get_goodness ? get_goodness(state) : state->get_goodness();
+      int goodness = get_goodness ? get_goodness(state) : state->get_goodness();
+      // Prefer faster wins / slower losses: adjust terminal values by ply
+      // so the engine fights harder in lost positions (delays loss, creates
+      // complications) rather than treating all forced losses as identical.
+      if (goodness >= INF - 1000) goodness = INF - indent;
+      else if (goodness <= -INF + 1000) goodness = -(INF - indent);
       return {goodness, best_move, false};
     }
 
@@ -939,7 +944,10 @@ struct Minimax : public Algorithm<S, M> {
       }
 
       if (!found_best_move && !legal_moves.empty()) {
-	best_move = legal_moves[random.uniform(0, legal_moves.size() - 1)];
+	// All moves scored equally (e.g., all forced loss). Pick the first
+	// in move ordering (best heuristic) rather than random — gives
+	// practical chances against human opponents who may miss the win.
+	best_move = legal_moves[0];
       }
     }
 
